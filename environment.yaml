@@ -21,7 +21,7 @@ channels:
   - conda-forge
   - pytorch
 dependencies:
-  - numpy
-  - pytorch
+  - python>=3.8
+  - pytorch>=1.11.0
   - pip:
-      - tad-mctc
+      - tad-mctc>=0.0.2
