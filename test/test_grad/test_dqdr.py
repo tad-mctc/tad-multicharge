@@ -150,12 +150,9 @@ def test_gradgradcheck_batch(dtype: torch.dtype, name1: str, name2: str) -> None
     assert dgradgradcheck(func, diffvars, atol=tol, fast_mode=FAST_MODE)
 
 
-sample_list = sample_list[:-1]
-
-
 @pytest.mark.grad
 @pytest.mark.parametrize("dtype", [torch.double])
-@pytest.mark.parametrize("name", sample_list)
+@pytest.mark.parametrize("name", sample_list[:-1])
 def test_jacobian(dtype: torch.dtype, name: str) -> None:
     """Compare with reference values from tblite."""
     dd: DD = {"device": DEVICE, "dtype": dtype}
@@ -185,6 +182,7 @@ def test_jacobian(dtype: torch.dtype, name: str) -> None:
     jacobian: Tensor = fjac(numbers, positions, charge)  # type: ignore
 
     positions.detach_()
+    jacobian.detach_()
 
     # 1 / 768 element in MB16_43_01 is slightly off
     assert pytest.approx(ref.cpu(), abs=tol * 10.5) == jacobian.cpu()
