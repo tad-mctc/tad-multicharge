@@ -24,6 +24,7 @@ import pytest
 import torch
 from tad_mctc.autograd import dgradcheck, dgradgradcheck, jac
 from tad_mctc.batch import pack
+from tad_mctc.convert import tensor_to_numpy
 from tad_mctc.typing import DD, Callable, Tensor
 
 from tad_multicharge import eeq
@@ -272,9 +273,9 @@ def run_jacobian(dtype: torch.dtype, name: str, atol: float) -> None:
     jacobian: Tensor = fjac(numbers, positions, charge)  # type: ignore
 
     positions.detach_()
-    jacobian.detach_()
+    jac_np = tensor_to_numpy(jacobian)
 
-    assert pytest.approx(numgrad.cpu(), abs=atol) == jacobian.cpu()
+    assert pytest.approx(numgrad.cpu(), abs=atol) == jac_np
 
 
 @pytest.mark.grad
