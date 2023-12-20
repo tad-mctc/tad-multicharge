@@ -1,0 +1,61 @@
+# This file is part of tad-multicharge.
+#
+# SPDX-Identifier: LGPL-3.0
+# Copyright (C) 2023 Marvin Friede
+#
+# tad-multicharge is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# tad-multicharge is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with tad-multicharge. If not, see <https://www.gnu.org/licenses/>.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-shebang-scripts-are-executable
+      - id: check-toml
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: debug-statements
+        language_version: python3
+
+  - repo: https://github.com/asottile/setup-cfg-fmt
+    rev: v2.5.0
+    hooks:
+      - id: setup-cfg-fmt
+        args:
+          [
+            --include-version-classifiers,
+            --min-py-version,
+            "3.8",
+            --max-py-version,
+            "3.11",
+          ]
+
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.15.0
+    hooks:
+      - id: pyupgrade
+        args: [--py37-plus, --keep-runtime-typing]
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.0
+    hooks:
+      - id: isort
+        name: isort (python)
+        args: ["--profile", "black", "--filter-files"]
+
+  - repo: https://github.com/psf/black
+    rev: 23.11.0
+    hooks:
+      - id: black
+        stages: [commit]

@@ -1,0 +1,48 @@
+# This file is part of tad-multicharge.
+#
+# SPDX-Identifier: LGPL-3.0
+# Copyright (C) 2023 Marvin Friede
+#
+# tad-multicharge is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# tad-multicharge is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with tad-multicharge. If not, see <https://www.gnu.org/licenses/>.
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+
+[tool.pytest.ini_options]
+addopts = "--doctest-modules"
+testpaths = ["test"]
+pythonpath = ["src"]
+markers = [
+  "grad: Marks tests which perform 'gradcheck' evaluations, this can be slow.",
+  "large: Marks tests for large molecules, this can be slow.",
+]
+
+
+[tool.mypy]
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+warn_redundant_casts = true
+warn_unreachable = true
+warn_unused_ignores = true
+
+
+[tool.coverage.run]
+plugins = ["covdefaults"]
+source = ["./src"]
+
+[tool.coverage.report]
+fail_under = 90
