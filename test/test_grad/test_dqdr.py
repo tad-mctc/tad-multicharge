@@ -24,7 +24,7 @@ import pytest
 import torch
 from tad_mctc.autograd import dgradcheck, dgradgradcheck, jac
 from tad_mctc.batch import pack
-from tad_mctc.convert import reshape_fortran
+from tad_mctc.convert import reshape_fortran, tensor_to_numpy
 from tad_mctc.typing import DD, Callable, Tensor
 
 from tad_multicharge import eeq
@@ -150,12 +150,9 @@ def test_gradgradcheck_batch(dtype: torch.dtype, name1: str, name2: str) -> None
     assert dgradgradcheck(func, diffvars, atol=tol, fast_mode=FAST_MODE)
 
 
-sample_list = sample_list[:-1]
-
-
 @pytest.mark.grad
 @pytest.mark.parametrize("dtype", [torch.double])
-@pytest.mark.parametrize("name", sample_list)
+@pytest.mark.parametrize("name", sample_list[:-1])
 def test_jacobian(dtype: torch.dtype, name: str) -> None:
     """Compare with reference values from tblite."""
     dd: DD = {"device": DEVICE, "dtype": dtype}
@@ -185,12 +182,13 @@ def test_jacobian(dtype: torch.dtype, name: str) -> None:
     jacobian: Tensor = fjac(numbers, positions, charge)  # type: ignore
 
     positions.detach_()
+    jac_np = tensor_to_numpy(jacobian)
 
     # 1 / 768 element in MB16_43_01 is slightly off
-    assert pytest.approx(ref.cpu(), abs=tol * 10.5) == jacobian.cpu()
+    assert pytest.approx(ref.cpu(), abs=tol * 10.5) == jac_np
 
     assert pytest.approx(ref.cpu(), abs=tol * 10) == numgrad.cpu()
-    assert pytest.approx(numgrad.cpu(), abs=tol) == jacobian.cpu()
+    assert pytest.approx(numgrad.cpu(), abs=tol) == jac_np
 
 
 def calc_numgrad(numbers: Tensor, positions: Tensor, charge: Tensor) -> Tensor:

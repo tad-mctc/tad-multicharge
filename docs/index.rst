@@ -5,8 +5,8 @@ Torch Autodiff Multicharge
     :target: https://img.shields.io/badge/python-3.8%20|%203.9%20|%203.10%20|%203.11-blue.svg
     :alt: Python Versions
 
-.. image:: https://img.shields.io/github/v/release/tad-mctc/tad-mctc
-    :target: https://github.com/tad-mctc/tad-mctc/releases/latest
+.. image:: https://img.shields.io/github/v/release/tad-mctc/tad-multicharge
+    :target: https://github.com/tad-mctc/tad-multicharge/releases/latest
     :alt: Release
 
 .. image:: https://img.shields.io/pypi/v/tad-mctc
@@ -17,21 +17,22 @@ Torch Autodiff Multicharge
     :target: https://www.gnu.org/licenses/lgpl-3.0
     :alt: LGPL-3.0
 
-.. image:: https://github.com/tad-mctc/tad-mctc/actions/workflows/python.yaml/badge.svg
-    :target: https://github.com/tad-mctc/tad-mctc/actions/workflows/python.yaml
+.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/python.yaml/badge.svg
+    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/python.yaml
     :alt: CI
 
 .. image:: https://readthedocs.org/projects/tad-mctc/badge/?version=latest
     :target: https://tad-mctc.readthedocs.io
     :alt: Documentation Status
 
-.. image:: https://codecov.io/gh/tad-mctc/tad-mctc/branch/main/graph/badge.svg?token=OGJJnZ6t4G
-    :target: https://codecov.io/gh/tad-mctc/tad-mctc
+.. image:: https://codecov.io/gh/tad-mctc/tad-multicharge/branch/main/graph/badge.svg?token=OGJJnZ6t4G
+    :target: https://codecov.io/gh/tad-mctc/tad-multicharge
     :alt: Coverage
 
-.. image:: https://results.pre-commit.ci/badge/github/tad-mctc/tad-mctc/main.svg
-    :target: https://results.pre-commit.ci/latest/github/tad-mctc/tad-mctc/main
+.. image:: https://results.pre-commit.ci/badge/github/tad-mctc/tad-multicharge/main.svg
+    :target: https://results.pre-commit.ci/latest/github/tad-mctc/tad-multicharge/main
     :alt: pre-commit.ci status
+
 
 PyTorch implementation of the electronegativity equilibration (EEQ) model for atomic partial charges.
 This module allows to process a single structure or a batch of structures for the calculation of atom-resolved dispersion energies.
