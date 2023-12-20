@@ -72,6 +72,7 @@ Example
 >>>
 >>> # calculate dispersion energy in Hartree
 >>> energy = torch.sum(d4.dftd4(numbers, positions, charge, param), -1)
+>>>
 >>> torch.set_printoptions(precision=10)
 >>> print(energy)
 tensor([-0.0088341432, -0.0027013607])
@@ -83,3 +84,4 @@ import torch
 from . import eeq, model
 from .__version__ import __version__
 from .eeq import get_charges as get_eeq_charges
+from .eeq import get_eeq
