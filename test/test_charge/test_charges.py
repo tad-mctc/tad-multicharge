@@ -40,6 +40,7 @@ from __future__ import annotations
 import pytest
 import torch
 from tad_mctc.batch import pack
+from tad_mctc.ncoord import cn_eeq
 from tad_mctc.typing import DD
 
 from tad_multicharge import eeq
@@ -62,6 +63,31 @@ def test_single(dtype: torch.dtype):
     eref = sample["energy"].to(**dd)
 
     cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], **dd)
+    eeq_model = eeq.EEQModel.param2019(**dd)
+    energy, qat = eeq.solve(numbers, positions, total_charge, eeq_model, cn)
+    tot = torch.sum(qat, -1)
+
+    assert qat.dtype == energy.dtype == dtype
+    assert pytest.approx(total_charge.cpu(), abs=1e-6) == tot.cpu()
+    assert pytest.approx(qref.cpu(), abs=tol) == qat.cpu()
+    assert pytest.approx(eref.cpu(), abs=tol) == energy.cpu()
+
+
+@pytest.mark.parametrize("dtype", [torch.float, torch.double])
+@pytest.mark.parametrize("name", ["AmF3"])
+def test_single_with_cn(dtype: torch.dtype, name: str):
+    dd: DD = {"device": DEVICE, "dtype": dtype}
+    tol = 1e-4 if dtype == torch.float32 else 1e-6
+
+    sample = samples[name]
+    numbers = sample["numbers"].to(DEVICE)
+    positions = sample["positions"].to(**dd)
+    total_charge = sample["total_charge"].to(**dd)
+
+    qref = sample["q"].to(**dd)
+    eref = sample["energy"].to(**dd)
+
+    cn = cn_eeq(numbers, positions)
     eeq_model = eeq.EEQModel.param2019(**dd)
     energy, qat = eeq.solve(numbers, positions, total_charge, eeq_model, cn)
     tot = torch.sum(qat, -1)

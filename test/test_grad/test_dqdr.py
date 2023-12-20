@@ -35,7 +35,7 @@ from .samples_dqdr import samples
 sample_list = [
     "LiH",
     "SiH4",
-    # "AmF3",
+    "AmF3",
     "PbH4-BiH3",
     "MB16_43_01",
     "MB16_43_02",
