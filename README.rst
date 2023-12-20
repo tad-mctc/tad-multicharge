@@ -132,7 +132,7 @@ Note that this randomizes the order of tests but skips "large" tests. To modify 
 Examples
 --------
 
-The following example shows how to calculate the DFT-D4 dispersion energy for a single structure.
+The following example shows how to calculate the EEQ partial charges and the corresponding electrostatic energy for a single structure.
 
 .. code:: python
 
@@ -166,7 +166,7 @@ The following example shows how to calculate the DFT-D4 dispersion energy for a 
     print(qat)
     # tensor([-0.8347, -0.8347,  0.2731,  0.2886,  0.2731,  0.2731,  0.2886,  0.2731])
 
-The next example shows the calculation of dispersion energies for a batch of structures.
+The next example shows the calculation of the electrostatic energy with a simpler API for a batch of structures.
 
 .. code:: python
 
