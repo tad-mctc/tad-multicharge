@@ -9,8 +9,8 @@ Torch Autodiff Multicharge
     :target: https://github.com/tad-mctc/tad-multicharge/releases/latest
     :alt: Release
 
-.. image:: https://img.shields.io/pypi/v/tad-mctc
-    :target: https://pypi.org/project/tad-mctc/
+.. image:: https://img.shields.io/pypi/v/tad-multicharge
+    :target: https://pypi.org/project/tad-multicharge/
     :alt: PyPI
 
 .. image:: https://img.shields.io/badge/License-LGPL_v3-blue.svg
@@ -21,8 +21,8 @@ Torch Autodiff Multicharge
     :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/python.yaml
     :alt: CI
 
-.. image:: https://readthedocs.org/projects/tad-mctc/badge/?version=latest
-    :target: https://tad-mctc.readthedocs.io
+.. image:: https://readthedocs.org/projects/tad-multicharge/badge/?version=latest
+    :target: https://tad-multicharge.readthedocs.io
     :alt: Documentation Status
 
 .. image:: https://codecov.io/gh/tad-mctc/tad-multicharge/branch/main/graph/badge.svg?token=OGJJnZ6t4G
