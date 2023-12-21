@@ -8,6 +8,6 @@ The following modules are contained with `tad_multicharge`.
 .. toctree::
 
    param/index
-   cutoff
+   defaults
    eeq
    model
