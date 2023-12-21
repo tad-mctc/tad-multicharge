@@ -53,7 +53,7 @@ For alternative implementations, also check out
 Examples
 --------
 
-The following example shows how to calculate the DFT-D4 dispersion energy for a single structure.
+The following example shows how to calculate the EEQ partial charges and the corresponding electrostatic energy for a single structure.
 
 .. code:: python
 
@@ -87,7 +87,7 @@ The following example shows how to calculate the DFT-D4 dispersion energy for a 
     print(qat)
     # tensor([-0.8347, -0.8347,  0.2731,  0.2886,  0.2731,  0.2731,  0.2886,  0.2731])
 
-The next example shows the calculation of dispersion energies for a batch of structures.
+The next example shows the calculation of the electrostatic energy with a simpler API for a batch of structures.
 
 .. code:: python
 
@@ -149,17 +149,9 @@ The next example shows the calculation of dispersion energies for a batch of str
     # tensor(-0.0142565966)
 
 
-Contributing
-------------
+.. toctree::
+   :hidden:
+   :maxdepth: 1
 
-This is a volunteer open source projects and contributions are always welcome.
-Please, take a moment to read the `contributing guidelines <CONTRIBUTING.md>`__.
-
-License
--------
-
-This project is free software: you can redistribute it and/or modify it under the terms of the Lesser GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-
-This project is distributed in the hope that it will be useful, but without any warranty; without even the implied warranty of merchantability or fitness for a particular purpose. See the Lesser GNU General Public License for more details.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project by you, as defined in the Lesser GNU General Public license, shall be licensed as above, without any additional terms or conditions.
+   installation
+   modules/index
