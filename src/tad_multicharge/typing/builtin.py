@@ -15,38 +15,11 @@
 #
 # You should have received a copy of the GNU Lesser General Public License
 # along with tad-multicharge. If not, see <https://www.gnu.org/licenses/>.
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+"""
+Type annotations: Built-ins
+===========================
 
-
-[tool.pytest.ini_options]
-addopts = "--doctest-modules"
-testpaths = ["test"]
-pythonpath = ["src"]
-markers = [
-  "grad: Marks tests which perform 'gradcheck' evaluations, this can be slow.",
-  "large: Marks tests for large molecules, this can be slow.",
-]
-
-
-[tool.mypy]
-check_untyped_defs = true
-disallow_any_generics = true
-disallow_incomplete_defs = true
-disallow_untyped_defs = true
-warn_redundant_casts = true
-warn_unreachable = true
-warn_unused_ignores = true
-exclude = '''
-  (?x)
-  ^test?s/conftest.py$
-'''
-
-
-[tool.coverage.run]
-plugins = ["covdefaults"]
-source = ["./src"]
-
-[tool.coverage.report]
-fail_under = 90
+Built-in type annotations are imported from the *tad-mctc* library, which
+handles some version checking.
+"""
+from tad_mctc.typing import Any, Callable, TypedDict

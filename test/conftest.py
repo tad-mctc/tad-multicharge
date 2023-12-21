@@ -147,7 +147,7 @@ def pytest_configure(config: pytest.Config) -> None:
         if torch.__version__ < (2, 0, 0):  # type: ignore
             torch.set_default_tensor_type("torch.cuda.FloatTensor")  # type: ignore
         else:
-            torch.set_default_device(DEVICE)  # type: ignore
+            torch.set_default_device(DEVICE)  # type: ignore[attr-defined]
     else:
         torch.use_deterministic_algorithms(True)
         DEVICE = None

@@ -41,16 +41,16 @@ import pytest
 import torch
 from tad_mctc.batch import pack
 from tad_mctc.ncoord import cn_eeq
-from tad_mctc.typing import DD
 
 from tad_multicharge import eeq
+from tad_multicharge.typing import DD
 
 from ..conftest import DEVICE
 from .samples import samples
 
 
 @pytest.mark.parametrize("dtype", [torch.float, torch.double])
-def test_single(dtype: torch.dtype):
+def test_single(dtype: torch.dtype) -> None:
     dd: DD = {"device": DEVICE, "dtype": dtype}
     tol = 1e-4 if dtype == torch.float32 else 1e-6
 
@@ -75,7 +75,7 @@ def test_single(dtype: torch.dtype):
 
 @pytest.mark.parametrize("dtype", [torch.float, torch.double])
 @pytest.mark.parametrize("name", ["AmF3"])
-def test_single_with_cn(dtype: torch.dtype, name: str):
+def test_single_with_cn(dtype: torch.dtype, name: str) -> None:
     dd: DD = {"device": DEVICE, "dtype": dtype}
     tol = 1e-4 if dtype == torch.float32 else 1e-6
 
@@ -99,7 +99,7 @@ def test_single_with_cn(dtype: torch.dtype, name: str):
 
 
 @pytest.mark.parametrize("dtype", [torch.float, torch.double])
-def test_ghost(dtype: torch.dtype):
+def test_ghost(dtype: torch.dtype) -> None:
     dd: DD = {"device": DEVICE, "dtype": dtype}
     tol = 1e-4 if dtype == torch.float32 else 1e-6
 
@@ -148,7 +148,7 @@ def test_ghost(dtype: torch.dtype):
 
 
 @pytest.mark.parametrize("dtype", [torch.float, torch.double])
-def test_batch(dtype: torch.dtype):
+def test_batch(dtype: torch.dtype) -> None:
     dd: DD = {"device": DEVICE, "dtype": dtype}
     tol = 1e-4 if dtype == torch.float32 else 1e-6
 

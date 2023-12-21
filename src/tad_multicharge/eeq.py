@@ -54,11 +54,11 @@ import torch
 from tad_mctc import storch
 from tad_mctc.batch import real_atoms, real_pairs
 from tad_mctc.ncoord import cn_eeq, erf_count
-from tad_mctc.typing import DD, Any, CountingFunction, Tensor
 
 from . import defaults
 from .model import ChargeModel
 from .param import eeq2019
+from .typing import DD, Any, CountingFunction, Tensor, get_default_dtype
 
 __all__ = ["EEQModel", "solve", "get_charges"]
 
@@ -93,10 +93,10 @@ class EEQModel(ChargeModel):
         EEQModel
             Instance of the EEQ charge model class.
         """
-
-        dd: dict = {"device": device}
-        if dtype is not None:
-            dd["dtype"] = dtype
+        dd: DD = {
+            "device": device,
+            "dtype": dtype if dtype is not None else get_default_dtype(),
+        }
 
         return cls(
             eeq2019.chi.to(**dd),
