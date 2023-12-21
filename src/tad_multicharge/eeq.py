@@ -53,9 +53,10 @@ import math
 import torch
 from tad_mctc import storch
 from tad_mctc.batch import real_atoms, real_pairs
-from tad_mctc.ncoord import cn_eeq
-from tad_mctc.typing import DD, Tensor
+from tad_mctc.ncoord import cn_eeq, erf_count
+from tad_mctc.typing import DD, Any, CountingFunction, Tensor
 
+from . import defaults
 from .model import ChargeModel
 from .param import eeq2019
 
@@ -240,7 +241,13 @@ def get_eeq(
     numbers: Tensor,
     positions: Tensor,
     chrg: Tensor,
-    cutoff: Tensor | None = None,
+    *,
+    counting_function: CountingFunction = erf_count,
+    rcov: Tensor | None = None,
+    cutoff: Tensor | float | int | None = defaults.EEQ_CN_CUTOFF,
+    cn_max: Tensor | float | int | None = defaults.EEQ_CN_MAX,
+    kcn: Tensor | float | int = defaults.EEQ_KCN,
+    **kwargs: Any,
 ) -> tuple[Tensor, Tensor]:
     """
     Calculate atomic EEQ charges and energies.
@@ -253,8 +260,16 @@ def get_eeq(
         Cartesian coordinates of the atoms in the system (batch, natoms, 3).
     chrg : Tensor
         Total charge of system.
-    cutoff : Tensor | None, optional
-        Real-space cutoff. Defaults to `None`.
+    counting_function : CountingFunction
+        Calculate weight for pairs. Defaults to `erf_count`.
+    rcov : Tensor | None, optional
+        Covalent radii for each species. Defaults to `None`.
+    cutoff : Tensor | float | int | None, optional
+        Real-space cutoff. Defaults to `defaults.CUTOFF_EEQ`.
+    cn_max : Tensor | float | int | None, optional
+        Maximum coordination number. Defaults to `defaults.CUTOFF_EEQ_MAX`.
+    kcn : Tensor | float | int, optional
+        Steepness of the counting function.
 
     Returns
     -------
@@ -262,7 +277,16 @@ def get_eeq(
         Tuple of electrostatic energies and partial charges.
     """
     eeq = EEQModel.param2019(device=positions.device, dtype=positions.dtype)
-    cn = cn_eeq(numbers, positions, cutoff=cutoff)
+    cn = cn_eeq(
+        numbers,
+        positions,
+        counting_function=counting_function,
+        rcov=rcov,
+        cutoff=cutoff,
+        cn_max=cn_max,
+        kcn=kcn,
+        **kwargs,
+    )
     return solve(numbers, positions, chrg, eeq, cn)
 
 
