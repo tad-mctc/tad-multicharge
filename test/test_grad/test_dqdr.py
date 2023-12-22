@@ -25,9 +25,9 @@ import torch
 from tad_mctc.autograd import dgradcheck, dgradgradcheck, jac
 from tad_mctc.batch import pack
 from tad_mctc.convert import reshape_fortran, tensor_to_numpy
-from tad_mctc.typing import DD, Callable, Tensor
 
 from tad_multicharge import eeq
+from tad_multicharge.typing import DD, Callable, Tensor
 
 from ..conftest import DEVICE, FAST_MODE
 from .samples_dqdr import samples
@@ -179,7 +179,7 @@ def test_jacobian(dtype: torch.dtype, name: str) -> None:
     positions.requires_grad_(True)
 
     fjac = jac(eeq.get_charges, argnums=1)
-    jacobian: Tensor = fjac(numbers, positions, charge)  # type: ignore
+    jacobian: Tensor = fjac(numbers, positions, charge)
 
     positions.detach_()
     jac_np = tensor_to_numpy(jacobian)

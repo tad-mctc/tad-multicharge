@@ -25,7 +25,8 @@ atomic partial charges as well as atom-resolved electrostatic energies.
 from __future__ import annotations
 
 import torch
-from tad_mctc.typing import Tensor, TensorLike
+
+from .typing import Tensor, TensorLike
 
 __all__ = ["ChargeModel"]
 

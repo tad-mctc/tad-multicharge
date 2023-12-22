@@ -11,3 +11,4 @@ The following modules are contained with `tad_multicharge`.
    defaults
    eeq
    model
+   typing/index
