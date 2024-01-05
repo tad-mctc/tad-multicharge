@@ -91,7 +91,7 @@ Install this project with ``pip`` in the environment
 The following dependencies are required
 
 - `numpy <https://numpy.org/>`__
-- `tad_mctc <https://github.com/tad-mctc/tad_mctc/>`__
+- `tad-mctc <https://github.com/tad-mctc/tad-mctc/>`__
 - `torch <https://pytorch.org/>`__
 - `pytest <https://docs.pytest.org/>`__ (tests only)
 
