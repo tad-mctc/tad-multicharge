@@ -9,6 +9,5 @@ The following modules are contained with `tad_multicharge`.
 
    param/index
    defaults
-   eeq
-   model
+   model/index
    typing/index

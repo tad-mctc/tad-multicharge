@@ -80,7 +80,7 @@ The following example shows how to calculate the EEQ partial charges and the cor
     cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 
     eeq_model = eeq.EEQModel.param2019()
-    energy, qat = eeq.solve(numbers, positions, total_charge, eeq_model, cn)
+    energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
 
     print(torch.sum(energy, -1))
     # tensor(-0.1750)
