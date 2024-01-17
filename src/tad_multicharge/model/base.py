@@ -108,4 +108,3 @@ class ChargeModel(TensorLike):
         (Tensor, Tensor)
             Tuple of electrostatic energies and partial charges.
         """
-        ...
