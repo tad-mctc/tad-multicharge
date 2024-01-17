@@ -55,8 +55,7 @@ from tad_mctc import storch
 from tad_mctc.batch import real_atoms, real_pairs
 from tad_mctc.ncoord import cn_eeq, erf_count
 
-from ..param import defaults
-from ..param import eeq2019
+from ..param import defaults, eeq2019
 from ..typing import DD, Any, CountingFunction, Tensor, get_default_dtype
 from .base import ChargeModel
 
