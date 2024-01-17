@@ -23,8 +23,9 @@ Implementation of a base class for charge models.
 """
 from __future__ import annotations
 
-import torch
 from abc import abstractmethod
+
+import torch
 
 from ..typing import Tensor, TensorLike
 

@@ -56,9 +56,9 @@ from tad_mctc.batch import real_atoms, real_pairs
 from tad_mctc.ncoord import cn_eeq, erf_count
 
 from .. import defaults
-from .base import ChargeModel
 from ..param import eeq2019
 from ..typing import DD, Any, CountingFunction, Tensor, get_default_dtype
+from .base import ChargeModel
 
 __all__ = ["EEQModel", "get_charges"]
 
@@ -173,7 +173,7 @@ class EEQModel(ChargeModel):
                 f"All tensors of '{name}' must have the same dtype!\n"
                 f"Use `{name}.param2019(dtype=dtype)` to correctly set it."
             )
-        
+
         eps = torch.tensor(torch.finfo(positions.dtype).eps, **self.dd)
         zero = torch.tensor(0.0, **self.dd)
         stop = torch.sqrt(torch.tensor(2.0 / math.pi, **self.dd))  # sqrt(2/pi)

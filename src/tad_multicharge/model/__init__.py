@@ -19,7 +19,7 @@
 Model
 =====
 
-This module contains all available charge models. Currently, only the 
+This module contains all available charge models. Currently, only the
 electronegativity equilibration model (EEQ) is implemented.
 """
 from .base import *

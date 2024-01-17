@@ -30,12 +30,13 @@ to 1e-6) across different PyTorch versions (1.11.0 vs 1.13.0) for single
 precision. For double precision, however the results are identical.
 """
 from __future__ import annotations
+
 import pytest
 import torch
 from tad_mctc.convert import str_to_device
 from tad_mctc.typing import MockTensor
 
-from tad_multicharge.model import eeq, ChargeModel
+from tad_multicharge.model import ChargeModel, eeq
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32, torch.float64])
