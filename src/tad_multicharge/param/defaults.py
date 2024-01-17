@@ -16,14 +16,17 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with tad-multicharge. If not, see <https://www.gnu.org/licenses/>.
 """
-Defaults
-========
+Parameters: Defaults
+====================
 
 Default global parameters of the charge models.
 
-- EEQ: real-space cutoffs for the coordination number
+For the EEQ model, the following defaults are set:
+- real-space cutoffs for the coordination number
 
-- EEQ: Steepness of CN counting function
+- maximum coordination number
+
+- steepness of CN counting function
 """
 
 EEQ_CN_CUTOFF = 25.0
