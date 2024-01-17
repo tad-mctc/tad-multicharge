@@ -30,12 +30,12 @@ to 1e-6) across different PyTorch versions (1.11.0 vs 1.13.0) for single
 precision. For double precision, however the results are identical.
 """
 from __future__ import annotations
-
 import pytest
 import torch
 from tad_mctc.convert import str_to_device
+from tad_mctc.typing import MockTensor
 
-from tad_multicharge import eeq
+from tad_multicharge.model import eeq, ChargeModel
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32, torch.float64])
@@ -99,7 +99,7 @@ def test_solve_dtype_fail() -> None:
 
     # all tensor must have the same type
     with pytest.raises(RuntimeError):
-        eeq.solve(t, t.type(torch.float16), t, model, t)
+        model.solve(t, t.type(torch.float16), t, t)
 
 
 @pytest.mark.cuda
@@ -115,4 +115,32 @@ def test_solve_device_fail() -> None:
 
     # all tensor must be on the same device
     with pytest.raises(RuntimeError):
-        eeq.solve(t, t2, t, model, t)
+        model.solve(t, t2, t, t)
+
+
+def test_model_device_different() -> None:
+    cuda_tensor = MockTensor([4, 5, 6])
+    cuda_tensor.device = torch.device("cuda")
+
+    cpu_tensor = MockTensor([1, 2, 3])
+    cpu_tensor.device = torch.device("cpu")
+    with pytest.raises(RuntimeError) as exc:
+        ChargeModel(cpu_tensor, cpu_tensor, cpu_tensor, cuda_tensor)
+
+    assert "All tensors must be on the same device!" in str(exc.value)
+
+
+def test_solve_device_different() -> None:
+    model = eeq.EEQModel.param2019()
+
+    cuda_tensor = MockTensor([4, 5, 6])
+    cuda_tensor.device = torch.device("cuda")
+
+    cpu_tensor = MockTensor([1, 2, 3])
+    cpu_tensor.device = torch.device("cpu")
+
+    # all tensor must be on the same device
+    with pytest.raises(RuntimeError) as exc:
+        model.solve(cpu_tensor, cuda_tensor, cpu_tensor, cpu_tensor)
+
+    assert "must be on the same device!" in str(exc.value)

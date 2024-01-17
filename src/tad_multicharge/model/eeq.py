@@ -40,7 +40,7 @@ Example
 >>> total_charge = torch.tensor(0.0)
 >>> cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 >>> eeq_model = eeq.EEQModel.param2019()
->>> energy, qat = eeq.solve(numbers, positions, total_charge, eeq_model, cn)
+>>> energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
 >>> print(torch.sum(energy, -1))
 tensor(-0.1750)
 >>> print(qat)
@@ -55,12 +55,12 @@ from tad_mctc import storch
 from tad_mctc.batch import real_atoms, real_pairs
 from tad_mctc.ncoord import cn_eeq, erf_count
 
-from . import defaults
-from .model import ChargeModel
-from .param import eeq2019
-from .typing import DD, Any, CountingFunction, Tensor, get_default_dtype
+from .. import defaults
+from .base import ChargeModel
+from ..param import eeq2019
+from ..typing import DD, Any, CountingFunction, Tensor, get_default_dtype
 
-__all__ = ["EEQModel", "solve", "get_charges"]
+__all__ = ["EEQModel", "get_charges"]
 
 
 class EEQModel(ChargeModel):
@@ -106,135 +106,136 @@ class EEQModel(ChargeModel):
             **dd,
         )
 
+    def solve(
+        self,
+        numbers: Tensor,
+        positions: Tensor,
+        total_charge: Tensor,
+        cn: Tensor,
+    ) -> tuple[Tensor, Tensor]:
+        """
+        Solve the electronegativity equilibration for the partial charges
+        minimizing the electrostatic energy.
 
-def solve(
-    numbers: Tensor,
-    positions: Tensor,
-    total_charge: Tensor,
-    model: ChargeModel,
-    cn: Tensor,
-) -> tuple[Tensor, Tensor]:
-    """
-    Solve the electronegativity equilibration for the partial charges minimizing
-    the electrostatic energy.
+        Parameters
+        ----------
+        numbers : Tensor
+            Atomic numbers of all atoms in the system.
+        positions : Tensor
+            Cartesian coordinates of the atoms in the system (batch, natoms, 3).
+        total_charge : Tensor
+            Total charge of the system.
+        model : ChargeModel
+            Charge model to use.
+        cn : Tensor
+            Coordination numbers for all atoms in the system.
 
-    Parameters
-    ----------
-    numbers : Tensor
-        Atomic numbers of all atoms in the system.
-    positions : Tensor
-        Cartesian coordinates of the atoms in the system (batch, natoms, 3).
-    total_charge : Tensor
-        Total charge of the system.
-    model : ChargeModel
-        Charge model to use.
-    cn : Tensor
-        Coordination numbers for all atoms in the system.
+        Returns
+        -------
+        (Tensor, Tensor)
+            Tuple of electrostatic energies and partial charges.
 
-    Returns
-    -------
-    (Tensor, Tensor)
-        Tuple of electrostatic energies and partial charges.
+        Example
+        -------
+        >>> import torch
+        >>> from tad_multicharge import eeq
+        >>> numbers = torch.tensor([7, 1, 1, 1])
+        >>> positions = torch.tensor([
+        ...     [+0.00000000000000, +0.00000000000000, -0.54524837997150],
+        ...     [-0.88451840382282, +1.53203081565085, +0.18174945999050],
+        ...     [-0.88451840382282, -1.53203081565085, +0.18174945999050],
+        ...     [+1.76903680764564, +0.00000000000000, +0.18174945999050],
+        ... ], requires_grad=True)
+        >>> total_charge = torch.tensor(0.0, requires_grad=True)
+        >>> cn = torch.tensor([3.0, 1.0, 1.0, 1.0])
+        >>> eeq_model = eeq.EEQModel.param2019()
+        >>> e = eeq_model.solve(numbers, positions, total_charge, cn)[0]
+        >>> energy = torch.sum(e, -1)
+        >>> energy.backward()
+        >>> print(positions.grad)
+        tensor([[-9.3132e-09,  7.4506e-09, -4.8064e-02],
+                [-1.2595e-02,  2.1816e-02,  1.6021e-02],
+                [-1.2595e-02, -2.1816e-02,  1.6021e-02],
+                [ 2.5191e-02, -6.9849e-10,  1.6021e-02]])
+        >>> print(total_charge.grad)
+        tensor(0.6312)
+        """
+        if self.device != positions.device:
+            name = self.__class__.__name__
+            raise RuntimeError(
+                f"All tensors of '{name}' must be on the same device!\n"
+                f"Use `{name}.param2019(device=device)` to correctly set it."
+            )
 
-    Example
-    -------
-    >>> import torch
-    >>> from tad_multicharge import eeq
-    >>> numbers = torch.tensor([7, 1, 1, 1])
-    >>> positions = torch.tensor([
-    ...     [+0.00000000000000, +0.00000000000000, -0.54524837997150],
-    ...     [-0.88451840382282, +1.53203081565085, +0.18174945999050],
-    ...     [-0.88451840382282, -1.53203081565085, +0.18174945999050],
-    ...     [+1.76903680764564, +0.00000000000000, +0.18174945999050],
-    ... ], requires_grad=True)
-    >>> total_charge = torch.tensor(0.0, requires_grad=True)
-    >>> cn = torch.tensor([3.0, 1.0, 1.0, 1.0])
-    >>> eeq_model = eeq.EEQModel.param2019()
-    >>> energy = torch.sum(eeq.solve(numbers, positions, total_charge, eeq_model, cn)[0], -1)
-    >>> energy.backward()
-    >>> print(positions.grad)
-    tensor([[-9.3132e-09,  7.4506e-09, -4.8064e-02],
-            [-1.2595e-02,  2.1816e-02,  1.6021e-02],
-            [-1.2595e-02, -2.1816e-02,  1.6021e-02],
-            [ 2.5191e-02, -6.9849e-10,  1.6021e-02]])
-    >>> print(total_charge.grad)
-    tensor(0.6312)
-    """
-    dd: DD = {"device": positions.device, "dtype": positions.dtype}
+        if self.dtype != positions.dtype:
+            name = self.__class__.__name__
+            raise RuntimeError(
+                f"All tensors of '{name}' must have the same dtype!\n"
+                f"Use `{name}.param2019(dtype=dtype)` to correctly set it."
+            )
+        
+        eps = torch.tensor(torch.finfo(positions.dtype).eps, **self.dd)
+        zero = torch.tensor(0.0, **self.dd)
+        stop = torch.sqrt(torch.tensor(2.0 / math.pi, **self.dd))  # sqrt(2/pi)
 
-    if model.device != positions.device:
-        name = model.__class__.__name__
-        raise RuntimeError(
-            f"All tensors of '{name}' must be on the same device!\n"
-            f"Use `{name}.param2019(device=device)` to correctly set the it."
-        )
+        real = real_atoms(numbers)
+        mask = real_pairs(numbers, mask_diagonal=True)
 
-    if model.dtype != positions.dtype:
-        name = model.__class__.__name__
-        raise RuntimeError(
-            f"All tensors of '{name}' must have the same dtype!\n"
-            f"Use `{name}.param2019(dtype=dtype)` to correctly set it."
-        )
-
-    eps = torch.tensor(torch.finfo(positions.dtype).eps, **dd)
-    zero = torch.tensor(0.0, **dd)
-    stop = torch.sqrt(torch.tensor(2.0 / math.pi, **dd))  # sqrt(2/pi)
-
-    real = real_atoms(numbers)
-    mask = real_pairs(numbers, mask_diagonal=True)
-
-    distances = torch.where(mask, storch.cdist(positions, positions, p=2), eps)
-    diagonal = mask.new_zeros(mask.shape)
-    diagonal.diagonal(dim1=-2, dim2=-1).fill_(True)
-
-    cn_sqrt = torch.sqrt(torch.clamp(cn, min=eps))
-    cc = torch.where(
-        real,
-        -model.chi[numbers] + cn_sqrt * model.kcn[numbers],
-        zero,
-    )
-    rhs = torch.concat((cc, total_charge.unsqueeze(-1)), dim=-1)
-
-    # radii
-    rad = model.rad[numbers]
-    rads = torch.clamp(rad.unsqueeze(-1) ** 2 + rad.unsqueeze(-2) ** 2, min=eps)
-    gamma = torch.where(mask, 1.0 / torch.sqrt(rads), zero)
-
-    # hardness
-    eta = torch.where(
-        real,
-        model.eta[numbers] + stop / rad,
-        torch.tensor(1.0, **dd),
-    )
-
-    coulomb = torch.where(
-        diagonal,
-        eta.unsqueeze(-1),
-        torch.where(
+        distances = torch.where(
             mask,
-            torch.erf(distances * gamma) / distances,
+            storch.cdist(positions, positions, p=2),
+            eps,
+        )
+        diagonal = mask.new_zeros(mask.shape)
+        diagonal.diagonal(dim1=-2, dim2=-1).fill_(True)
+
+        cc = torch.where(
+            real,
+            -self.chi[numbers] + storch.sqrt(cn) * self.kcn[numbers],
             zero,
-        ),
-    )
+        )
+        rhs = torch.concat((cc, total_charge.unsqueeze(-1)), dim=-1)
 
-    constraint = torch.where(
-        real,
-        torch.ones(numbers.shape, **dd),
-        torch.zeros(numbers.shape, **dd),
-    )
-    zeros = torch.zeros(numbers.shape[:-1], **dd)
+        # radii
+        rad = self.rad[numbers]
+        rads = rad.unsqueeze(-1) ** 2 + rad.unsqueeze(-2) ** 2
+        gamma = torch.where(mask, 1.0 / storch.sqrt(rads), zero)
 
-    matrix = torch.concat(
-        (
-            torch.concat((coulomb, constraint.unsqueeze(-1)), dim=-1),
-            torch.concat((constraint, zeros.unsqueeze(-1)), dim=-1).unsqueeze(-2),
-        ),
-        dim=-2,
-    )
+        # hardness
+        eta = torch.where(
+            real,
+            self.eta[numbers] + stop / rad,
+            torch.tensor(1.0, **self.dd),
+        )
 
-    x = torch.linalg.solve(matrix, rhs)
-    e = x * (0.5 * torch.einsum("...ij,...j->...i", matrix, x) - rhs)
-    return e[..., :-1], x[..., :-1]
+        coulomb = torch.where(
+            diagonal,
+            eta.unsqueeze(-1),
+            torch.where(
+                mask,
+                torch.erf(distances * gamma) / distances,
+                zero,
+            ),
+        )
+
+        constraint = torch.where(
+            real,
+            torch.ones(numbers.shape, **self.dd),
+            torch.zeros(numbers.shape, **self.dd),
+        )
+        zeros = torch.zeros(numbers.shape[:-1], **self.dd)
+
+        matrix = torch.concat(
+            (
+                torch.concat((coulomb, constraint.unsqueeze(-1)), dim=-1),
+                torch.concat((constraint, zeros.unsqueeze(-1)), dim=-1).unsqueeze(-2),
+            ),
+            dim=-2,
+        )
+
+        x = torch.linalg.solve(matrix, rhs)
+        e = x * (0.5 * torch.einsum("...ij,...j->...i", matrix, x) - rhs)
+        return e[..., :-1], x[..., :-1]
 
 
 def get_eeq(
@@ -287,7 +288,7 @@ def get_eeq(
         kcn=kcn,
         **kwargs,
     )
-    return solve(numbers, positions, chrg, eeq, cn)
+    return eeq.solve(numbers, positions, chrg, cn)
 
 
 def get_charges(

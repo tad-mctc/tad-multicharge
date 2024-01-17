@@ -16,17 +16,17 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with tad-multicharge. If not, see <https://www.gnu.org/licenses/>.
 """
-Charge Model
-============
+Model: Base Charge Model
+========================
 
-Implementation of the electronegativity equlibration model for obtaining
-atomic partial charges as well as atom-resolved electrostatic energies.
+Implementation of a base class for charge models.
 """
 from __future__ import annotations
 
 import torch
+from abc import abstractmethod
 
-from .typing import Tensor, TensorLike
+from ..typing import Tensor, TensorLike
 
 __all__ = ["ChargeModel"]
 
@@ -76,3 +76,35 @@ class ChargeModel(TensorLike):
             for tensor in (self.chi, self.kcn, self.eta, self.rad)
         ):
             raise RuntimeError("All tensors must have the same dtype!")
+
+    @abstractmethod
+    def solve(
+        self,
+        numbers: Tensor,
+        positions: Tensor,
+        total_charge: Tensor,
+        cn: Tensor,
+    ) -> tuple[Tensor, Tensor]:
+        """
+        Solve the electronegativity equilibration for the partial charges
+        minimizing the electrostatic energy.
+
+        Parameters
+        ----------
+        numbers : Tensor
+            Atomic numbers of all atoms in the system.
+        positions : Tensor
+            Cartesian coordinates of the atoms in the system (batch, natoms, 3).
+        total_charge : Tensor
+            Total charge of the system.
+        model : ChargeModel
+            Charge model to use.
+        cn : Tensor
+            Coordination numbers for all atoms in the system.
+
+        Returns
+        -------
+        (Tensor, Tensor)
+            Tuple of electrostatic energies and partial charges.
+        """
+        ...

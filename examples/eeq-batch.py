@@ -3,7 +3,7 @@ import torch
 from tad_mctc.batch import pack
 from tad_mctc.convert import symbol_to_number
 
-from tad_multicharge import eeq
+from tad_multicharge.model import eeq
 
 # S22 system 4: formamide dimer
 numbers = pack(

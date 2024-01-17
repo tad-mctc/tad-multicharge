@@ -1,7 +1,7 @@
 # SPDX-Identifier: CC0-1.0
 import torch
 
-from tad_multicharge import eeq
+from tad_multicharge.model import eeq
 
 numbers = torch.tensor([7, 7, 1, 1, 1, 1, 1, 1])
 
@@ -23,7 +23,7 @@ total_charge = torch.tensor(0.0)
 cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 
 eeq_model = eeq.EEQModel.param2019()
-energy, qat = eeq.solve(numbers, positions, total_charge, eeq_model, cn)
+energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
 
 print(torch.sum(energy, -1))
 # tensor(-0.1750)
