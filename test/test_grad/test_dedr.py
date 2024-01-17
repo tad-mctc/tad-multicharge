@@ -26,7 +26,7 @@ from tad_mctc.autograd import dgradcheck, dgradgradcheck, jac
 from tad_mctc.batch import pack
 from tad_mctc.convert import tensor_to_numpy
 
-from tad_multicharge import eeq
+from tad_multicharge.model import eeq
 from tad_multicharge.typing import DD, Callable, Tensor
 
 from ..conftest import DEVICE, FAST_MODE

@@ -4,4 +4,5 @@
 
 .. toctree::
 
+   defaults
    eeq2019

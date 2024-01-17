@@ -70,18 +70,16 @@ Example
 >>> # total charge of both systems
 >>> charge = torch.tensor([0.0, 0.0])
 >>>
->>> # calculate dispersion energy in Hartree
->>> energy = torch.sum(d4.dftd4(numbers, positions, charge, param), -1)
+>>> # calculate electrostatic energy in Hartree
+>>> energy = torch.sum(eeq.get_energy(numbers, positions, charge), -1)
 >>>
 >>> torch.set_printoptions(precision=10)
 >>> print(energy)
-tensor([-0.0088341432, -0.0027013607])
->>> print(energy[0] - 2*energy[1])
-tensor(-0.0034314217)
+>>> # tensor([-0.2086755037, -0.0972094536])
+>>> print(energy[0] - 2 * energy[1])
+>>> # tensor(-0.0142565966)
 """
 import torch
 
-from . import eeq, model
 from .__version__ import __version__
-from .eeq import get_charges as get_eeq_charges
-from .eeq import get_eeq
+from .model.eeq import get_charges as get_eeq_charges

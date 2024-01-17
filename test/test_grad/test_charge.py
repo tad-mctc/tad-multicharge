@@ -38,7 +38,7 @@ from tad_mctc.batch import pack
 from tad_mctc.data.molecules import mols as samples
 from tad_mctc.ncoord import cn_eeq
 
-from tad_multicharge import eeq
+from tad_multicharge.model import eeq
 from tad_multicharge.typing import DD, Callable, Tensor
 
 from ..conftest import DEVICE, FAST_MODE
@@ -69,7 +69,7 @@ def gradchecker(
 
     def func(pos: Tensor, tchrg: Tensor) -> Tensor:
         cn = cn_eeq(numbers, positions)
-        return eeq.solve(numbers, pos, tchrg, eeq_model, cn)[0]
+        return eeq_model.solve(numbers, pos, tchrg, cn)[0]
 
     return func, (positions, total_charge)
 
@@ -127,7 +127,7 @@ def gradchecker_batch(
 
     def func(pos: Tensor, tchrg: Tensor) -> Tensor:
         cn = cn_eeq(numbers, positions)
-        return eeq.solve(numbers, pos, tchrg, eeq_model, cn)[0]
+        return eeq_model.solve(numbers, pos, tchrg, cn)[0]
 
     return func, (positions, total_charge)
 

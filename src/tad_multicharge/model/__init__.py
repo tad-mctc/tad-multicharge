@@ -16,21 +16,11 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with tad-multicharge. If not, see <https://www.gnu.org/licenses/>.
 """
-Defaults
-========
+Model
+=====
 
-Default global parameters of the charge models.
-
-- EEQ: real-space cutoffs for the coordination number
-
-- EEQ: Steepness of CN counting function
+This module contains all available charge models. Currently, only the
+electronegativity equilibration model (EEQ) is implemented.
 """
-
-EEQ_CN_CUTOFF = 25.0
-"""Coordination number cutoff within EEQ (25.0)."""
-
-EEQ_CN_MAX = 8.0
-"""Maximum coordination number (8.0)."""
-
-EEQ_KCN = 7.5
-"""Steepness of counting function in EEQ model (7.5)."""
+from .base import *
+from .eeq import *

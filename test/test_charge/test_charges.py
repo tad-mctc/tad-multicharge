@@ -42,7 +42,7 @@ import torch
 from tad_mctc.batch import pack
 from tad_mctc.ncoord import cn_eeq
 
-from tad_multicharge import eeq
+from tad_multicharge.model import eeq
 from tad_multicharge.typing import DD
 
 from ..conftest import DEVICE
@@ -64,7 +64,7 @@ def test_single(dtype: torch.dtype) -> None:
 
     cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], **dd)
     eeq_model = eeq.EEQModel.param2019(**dd)
-    energy, qat = eeq.solve(numbers, positions, total_charge, eeq_model, cn)
+    energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
     tot = torch.sum(qat, -1)
 
     assert qat.dtype == energy.dtype == dtype
@@ -89,7 +89,7 @@ def test_single_with_cn(dtype: torch.dtype, name: str) -> None:
 
     cn = cn_eeq(numbers, positions)
     eeq_model = eeq.EEQModel.param2019(**dd)
-    energy, qat = eeq.solve(numbers, positions, total_charge, eeq_model, cn)
+    energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
     tot = torch.sum(qat, -1)
 
     assert qat.dtype == energy.dtype == dtype
@@ -138,7 +138,7 @@ def test_ghost(dtype: torch.dtype) -> None:
     )
 
     eeq_model = eeq.EEQModel.param2019(**dd)
-    energy, qat = eeq.solve(numbers, positions, total_charge, eeq_model, cn)
+    energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
     tot = torch.sum(qat, -1)
 
     assert qat.dtype == energy.dtype == dtype
@@ -228,7 +228,7 @@ def test_batch(dtype: torch.dtype) -> None:
         **dd,
     )
     eeq_model = eeq.EEQModel.param2019(**dd)
-    energy, qat = eeq.solve(numbers, positions, total_charge, eeq_model, cn)
+    energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
     tot = torch.sum(qat, -1)
 
     assert qat.dtype == energy.dtype == dtype
