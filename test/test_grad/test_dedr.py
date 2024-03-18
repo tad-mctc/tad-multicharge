@@ -47,9 +47,7 @@ sample_list_large = ["vancoh2"]
 tol = 1e-8
 
 
-def gradchecker(
-    dtype: torch.dtype, name: str
-) -> tuple[
+def gradchecker(dtype: torch.dtype, name: str) -> tuple[
     Callable[[Tensor], Tensor],  # autograd function
     Tensor,  # differentiable variables
 ]:
@@ -92,9 +90,7 @@ def test_gradgradcheck(dtype: torch.dtype, name: str) -> None:
     assert dgradgradcheck(func, diffvars, atol=tol, fast_mode=FAST_MODE)
 
 
-def gradchecker_batch(
-    dtype: torch.dtype, name1: str, name2: str
-) -> tuple[
+def gradchecker_batch(dtype: torch.dtype, name1: str, name2: str) -> tuple[
     Callable[[Tensor], Tensor],  # autograd function
     Tensor,  # differentiable variables
 ]:
