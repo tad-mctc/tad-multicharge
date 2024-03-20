@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pytest
 import torch
-from tad_mctc.autograd import dgradcheck, dgradgradcheck, jac
+from tad_mctc.autograd import dgradcheck, dgradgradcheck, jacrev
 from tad_mctc.batch import pack
 from tad_mctc.convert import reshape_fortran, tensor_to_numpy
 
@@ -174,8 +174,8 @@ def test_jacobian(dtype: torch.dtype, name: str) -> None:
     # variable to be differentiated
     positions.requires_grad_(True)
 
-    fjac = jac(eeq.get_charges, argnums=1)
-    jacobian: Tensor = fjac(numbers, positions, charge)
+    fjac = jacrev(eeq.get_charges, argnums=1)
+    jacobian: Tensor = fjac(numbers, positions, charge)  # type: ignore
 
     positions.detach_()
     jac_np = tensor_to_numpy(jacobian)
