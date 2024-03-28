@@ -80,8 +80,8 @@ Example
 """
 import torch
 
-from .__version__ import __version__
 from . import model, param, typing
+from .__version__ import __version__
 from .model import eeq
 from .model.eeq import get_charges as get_eeq_charges
 
