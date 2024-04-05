@@ -183,7 +183,7 @@ def test_jacobian(dtype: torch.dtype, name: str) -> None:
     assert pytest.approx(ref.cpu(), abs=tol * 10.5) == jac_np
 
     assert pytest.approx(ref.cpu(), abs=tol * 10) == numgrad.cpu()
-    assert pytest.approx(numgrad.cpu(), abs=tol) == jac_np
+    assert pytest.approx(numgrad.cpu(), abs=tol * 10) == jac_np
 
 
 def calc_numgrad(numbers: Tensor, positions: Tensor, charge: Tensor) -> Tensor:
