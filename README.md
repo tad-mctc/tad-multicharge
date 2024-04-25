@@ -17,6 +17,9 @@
       <a href="https://pypi.org/project/tad-multicharge/">
         <img src="https://img.shields.io/pypi/v/tad-multicharge?color=orange" alt="PyPI"/>
       </a>
+      <a href="https://anaconda.org/conda-forge/tad-multicharge">
+        <img src="https://img.shields.io/conda/vn/conda-forge/tad-multicharge.svg" alt="Conda Version"/>
+      </a>
       <a href="http://www.apache.org/licenses/LICENSE-2.0">
         <img src="https://img.shields.io/badge/License-Apache%202.0-orange.svg" alt="Apache-2.0"/>
       </a>

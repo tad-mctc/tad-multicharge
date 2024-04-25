@@ -13,6 +13,10 @@ Torch Autodiff Multicharge
     :target: https://pypi.org/project/tad-multicharge/
     :alt: PyPI
 
+.. image:: https://anaconda.org/conda-forge/tad-multicharge
+    :target: https://img.shields.io/conda/vn/conda-forge/tad-multicharge.svg
+    :alt: Conda Version
+
 .. image:: https://img.shields.io/badge/License-Apache%202.0-blue.svg
     :target: http://www.apache.org/licenses/LICENSE-2.0
     :alt: Apache-2.0
