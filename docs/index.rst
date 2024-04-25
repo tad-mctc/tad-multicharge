@@ -17,9 +17,17 @@ Torch Autodiff Multicharge
     :target: http://www.apache.org/licenses/LICENSE-2.0
     :alt: Apache-2.0
 
-.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/python.yaml/badge.svg
-    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/python.yaml
-    :alt: CI
+.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/ubuntu.yaml/badge.svg
+    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/ubuntu.yaml
+    :alt: Test Status Ubuntu
+
+.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos.yaml/badge.svg
+    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos.yaml
+    :alt: Test Status macOS
+
+.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/windows.yaml/badge.svg
+    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/windows.yaml
+    :alt: Test Status Windows
 
 .. image:: https://readthedocs.org/projects/tad-multicharge/badge/?version=latest
     :target: https://tad-multicharge.readthedocs.io

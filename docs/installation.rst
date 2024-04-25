@@ -10,6 +10,15 @@ pip
 
     pip install tad-multicharge
 
+conda
+~~~~~
+
+*tad-multicharge* is also available from ``conda``.
+
+.. code::
+
+    conda install tad-multicharge
+
 
 From source
 ~~~~~~~~~~~
