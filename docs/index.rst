@@ -37,13 +37,13 @@ Torch Autodiff Multicharge
     :target: https://tad-multicharge.readthedocs.io
     :alt: Documentation Status
 
-.. image:: https://codecov.io/gh/tad-mctc/tad-multicharge/branch/main/graph/badge.svg?token=OGJJnZ6t4G
-    :target: https://codecov.io/gh/tad-mctc/tad-multicharge
-    :alt: Coverage
-
 .. image:: https://results.pre-commit.ci/badge/github/tad-mctc/tad-multicharge/main.svg
     :target: https://results.pre-commit.ci/latest/github/tad-mctc/tad-multicharge/main
     :alt: pre-commit.ci status
+
+.. image:: https://codecov.io/gh/tad-mctc/tad-multicharge/branch/main/graph/badge.svg?token=OGJJnZ6t4G
+    :target: https://codecov.io/gh/tad-mctc/tad-multicharge
+    :alt: Coverage
 
 
 PyTorch implementation of the electronegativity equilibration (EEQ) model for atomic partial charges.
