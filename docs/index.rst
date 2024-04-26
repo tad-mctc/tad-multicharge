@@ -13,25 +13,37 @@ Torch Autodiff Multicharge
     :target: https://pypi.org/project/tad-multicharge/
     :alt: PyPI
 
+.. image:: https://anaconda.org/conda-forge/tad-multicharge
+    :target: https://img.shields.io/conda/vn/conda-forge/tad-multicharge.svg
+    :alt: Conda Version
+
 .. image:: https://img.shields.io/badge/License-Apache%202.0-blue.svg
     :target: http://www.apache.org/licenses/LICENSE-2.0
     :alt: Apache-2.0
 
-.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/python.yaml/badge.svg
-    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/python.yaml
-    :alt: CI
+.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/ubuntu.yaml/badge.svg
+    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/ubuntu.yaml
+    :alt: Test Status Ubuntu
+
+.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos.yaml/badge.svg
+    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos.yaml
+    :alt: Test Status macOS
+
+.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/windows.yaml/badge.svg
+    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/windows.yaml
+    :alt: Test Status Windows
 
 .. image:: https://readthedocs.org/projects/tad-multicharge/badge/?version=latest
     :target: https://tad-multicharge.readthedocs.io
     :alt: Documentation Status
 
-.. image:: https://codecov.io/gh/tad-mctc/tad-multicharge/branch/main/graph/badge.svg?token=OGJJnZ6t4G
-    :target: https://codecov.io/gh/tad-mctc/tad-multicharge
-    :alt: Coverage
-
 .. image:: https://results.pre-commit.ci/badge/github/tad-mctc/tad-multicharge/main.svg
     :target: https://results.pre-commit.ci/latest/github/tad-mctc/tad-multicharge/main
     :alt: pre-commit.ci status
+
+.. image:: https://codecov.io/gh/tad-mctc/tad-multicharge/branch/main/graph/badge.svg?token=OGJJnZ6t4G
+    :target: https://codecov.io/gh/tad-mctc/tad-multicharge
+    :alt: Coverage
 
 
 PyTorch implementation of the electronegativity equilibration (EEQ) model for atomic partial charges.

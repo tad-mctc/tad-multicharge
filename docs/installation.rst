@@ -4,11 +4,28 @@ Installation
 pip
 ~~~
 
+.. image:: https://img.shields.io/pypi/v/tad-multicharge
+    :target: https://pypi.org/project/tad-multicharge/
+    :alt: PyPI
+
 *tad-multicharge* can easily be installed with ``pip``.
 
 .. code::
 
     pip install tad-multicharge
+
+conda
+~~~~~
+
+.. image:: https://anaconda.org/conda-forge/tad-multicharge
+    :target: https://img.shields.io/conda/vn/conda-forge/tad-multicharge.svg
+    :alt: Conda Version
+
+*tad-multicharge* is also available from ``conda``.
+
+.. code::
+
+    conda install tad-multicharge
 
 
 From source
