@@ -2,7 +2,7 @@ Torch Autodiff Multicharge
 ==========================
 
 .. image:: https://img.shields.io/badge/python-%3E=3.8-blue.svg
-    :target: https://img.shields.io/badge/python-3.8%20|%203.9%20|%203.10%20|%203.11-blue.svg
+    :target: https://img.shields.io/badge/python-3.8%20|%203.9%20|%203.10%20|%203.11%20|%203.12-blue.svg
     :alt: Python Versions
 
 .. image:: https://img.shields.io/github/v/release/tad-mctc/tad-multicharge
@@ -25,9 +25,13 @@ Torch Autodiff Multicharge
     :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/ubuntu.yaml
     :alt: Test Status Ubuntu
 
-.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos.yaml/badge.svg
-    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos.yaml
-    :alt: Test Status macOS
+.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos-x86.yaml/badge.svg
+    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos-x86.yaml
+    :alt: Test Status macOS (x86)
+
+.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos-arm.yaml/badge.svg
+    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos-arm.yaml
+    :alt: Test Status macOS (ARM)
 
 .. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/windows.yaml/badge.svg
     :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/windows.yaml
