@@ -21,6 +21,6 @@ Type annotations: Built-ins
 Built-in type annotations are imported from the *tad-mctc* library, which
 handles some version checking.
 """
-from tad_mctc.typing import Any, Callable, TypedDict, overload, Literal
+from tad_mctc.typing import Any, Callable, Literal, TypedDict, overload
 
 __all__ = ["Any", "Callable", "Literal", "overload", "TypedDict"]
