@@ -39,7 +39,9 @@ Example
 >>> total_charge = torch.tensor(0.0)
 >>> cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 >>> eeq_model = eeq.EEQModel.param2019()
->>> energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
+>>> qat, energy = eeq_model.solve(
+...     numbers, positions, total_charge, cn, return_energy=True
+... )
 >>> print(torch.sum(energy, -1))
 tensor(-0.1750)
 >>> print(qat)
@@ -55,7 +57,15 @@ from tad_mctc.batch import real_atoms, real_pairs
 from tad_mctc.ncoord import cn_eeq, erf_count
 
 from ..param import defaults, eeq2019
-from ..typing import DD, Any, CountingFunction, Tensor, get_default_dtype
+from ..typing import (
+    DD,
+    Any,
+    CountingFunction,
+    Tensor,
+    get_default_dtype,
+    overload,
+    Literal,
+)
 from .base import ChargeModel
 
 __all__ = ["EEQModel", "get_charges"]
@@ -104,13 +114,34 @@ class EEQModel(ChargeModel):
             **dd,
         )
 
+    @overload
     def solve(
         self,
         numbers: Tensor,
         positions: Tensor,
         total_charge: Tensor,
         cn: Tensor,
-    ) -> tuple[Tensor, Tensor]:
+        return_energy: bool = False,
+    ) -> Tensor: ...
+
+    @overload
+    def solve(
+        self,
+        numbers: Tensor,
+        positions: Tensor,
+        total_charge: Tensor,
+        cn: Tensor,
+        return_energy: bool = True,
+    ) -> tuple[Tensor, Tensor]: ...
+
+    def solve(
+        self,
+        numbers: Tensor,
+        positions: Tensor,
+        total_charge: Tensor,
+        cn: Tensor,
+        return_energy: bool = False,
+    ) -> Tensor | tuple[Tensor, Tensor]:
         """
         Solve the electronegativity equilibration for the partial charges
         minimizing the electrostatic energy.
@@ -130,8 +161,9 @@ class EEQModel(ChargeModel):
 
         Returns
         -------
-        (Tensor, Tensor)
-            Tuple of electrostatic energies and partial charges.
+        Tensor | (Tensor, Tensor)
+            Tensor of electrostatic charges or tuple of partial charges and
+            electrostatic energies if ``return_energy=True``.
 
         Example
         -------
@@ -223,17 +255,65 @@ class EEQModel(ChargeModel):
         )
         zeros = torch.zeros(numbers.shape[:-1], **self.dd)
 
+        # | Coulomb    Constraint |
+        # | Constraint     0      |
         matrix = torch.concat(
             (
                 torch.concat((coulomb, constraint.unsqueeze(-1)), dim=-1),
-                torch.concat((constraint, zeros.unsqueeze(-1)), dim=-1).unsqueeze(-2),
+                torch.concat(
+                    (constraint, zeros.unsqueeze(-1)), dim=-1
+                ).unsqueeze(-2),
             ),
             dim=-2,
         )
 
         x = torch.linalg.solve(matrix, rhs)
-        e = x * (0.5 * torch.einsum("...ij,...j->...i", matrix, x) - rhs)
-        return e[..., :-1], x[..., :-1]
+
+        # do not compute energy unless specifically requested
+        if return_energy is False:
+            return x[..., :-1]
+
+        # remove constraint
+        _x = x[..., :-1]
+        _m = matrix[..., :-1, :-1]
+        _rhs = rhs[..., :-1]
+
+        # E_scalar = 0.5 * x^T @ A @ x - b @ x^T
+        # E_vector =  x * (0.5 * A @ x - b)
+        _e = _x * (0.5 * torch.einsum("...ij,...j->...i", _m, _x) - _rhs)
+
+        return _x, _e
+
+
+@overload
+def get_eeq(
+    numbers: Tensor,
+    positions: Tensor,
+    chrg: Tensor,
+    *,
+    counting_function: CountingFunction = erf_count,
+    rcov: Tensor | None = None,
+    cutoff: Tensor | float | int | None = defaults.EEQ_CN_CUTOFF,
+    cn_max: Tensor | float | int | None = defaults.EEQ_CN_MAX,
+    kcn: Tensor | float | int = defaults.EEQ_KCN,
+    return_energy: bool = False,
+    **kwargs: Any,
+) -> Tensor: ...
+
+
+@overload
+def get_eeq(
+    numbers: Tensor,
+    positions: Tensor,
+    chrg: Tensor,
+    *,
+    counting_function: CountingFunction = erf_count,
+    rcov: Tensor | None = None,
+    cutoff: Tensor | float | int | None = defaults.EEQ_CN_CUTOFF,
+    cn_max: Tensor | float | int | None = defaults.EEQ_CN_MAX,
+    return_energy: bool = True,
+    **kwargs: Any,
+) -> Tensor | tuple[Tensor, Tensor]: ...
 
 
 def get_eeq(
@@ -246,8 +326,9 @@ def get_eeq(
     cutoff: Tensor | float | int | None = defaults.EEQ_CN_CUTOFF,
     cn_max: Tensor | float | int | None = defaults.EEQ_CN_MAX,
     kcn: Tensor | float | int = defaults.EEQ_KCN,
+    return_energy: bool = False,
     **kwargs: Any,
-) -> tuple[Tensor, Tensor]:
+) -> Tensor | tuple[Tensor, Tensor]:
     """
     Calculate atomic EEQ charges and energies.
 
@@ -269,6 +350,8 @@ def get_eeq(
         Maximum coordination number. Defaults to `defaults.CUTOFF_EEQ_MAX`.
     kcn : Tensor | float | int, optional
         Steepness of the counting function.
+    return_energy : bool, optional
+        Return the EEQ energy as well. Defaults to `False`.
 
     Returns
     -------
@@ -286,7 +369,7 @@ def get_eeq(
         kcn=kcn,
         **kwargs,
     )
-    return eeq.solve(numbers, positions, chrg, cn)
+    return eeq.solve(numbers, positions, chrg, cn, return_energy=return_energy)
 
 
 def get_charges(
@@ -314,7 +397,7 @@ def get_charges(
     Tensor
         Atomic charges.
     """
-    return get_eeq(numbers, positions, chrg, cutoff=cutoff)[1]
+    return get_eeq(numbers, positions, chrg, cutoff=cutoff, return_energy=False)
 
 
 def get_energy(
@@ -342,4 +425,6 @@ def get_energy(
     Tensor
         Atomic energies.
     """
-    return get_eeq(numbers, positions, chrg, cutoff=cutoff)[0]
+    return get_eeq(numbers, positions, chrg, cutoff=cutoff, return_energy=True)[
+        1
+    ]

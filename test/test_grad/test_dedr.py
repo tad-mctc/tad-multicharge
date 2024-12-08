@@ -136,7 +136,9 @@ def test_gradcheck_batch(dtype: torch.dtype, name1: str, name2: str) -> None:
 @pytest.mark.parametrize("dtype", [torch.double])
 @pytest.mark.parametrize("name1", ["LiH"])
 @pytest.mark.parametrize("name2", sample_list + sample_list_large)
-def test_gradgradcheck_batch(dtype: torch.dtype, name1: str, name2: str) -> None:
+def test_gradgradcheck_batch(
+    dtype: torch.dtype, name1: str, name2: str
+) -> None:
     """
     Check a single analytical gradient of parameters against numerical
     gradient from `torch.autograd.gradgradcheck`.
@@ -277,7 +279,7 @@ def run_jacobian(dtype: torch.dtype, name: str, atol: float) -> None:
 @pytest.mark.parametrize("dtype", [torch.double])
 @pytest.mark.parametrize("name", sample_list)
 def test_jacobian(dtype: torch.dtype, name: str) -> None:
-    run_jacobian(dtype, name, tol)
+    run_jacobian(dtype, name, 1e-7)
 
 
 @pytest.mark.grad
@@ -288,7 +290,9 @@ def test_jacobian_large(dtype: torch.dtype, name: str) -> None:
     run_jacobian(dtype, name, 1e-6)
 
 
-def calc_numgrad_jacobian(numbers: Tensor, positions: Tensor, charge: Tensor) -> Tensor:
+def calc_numgrad_jacobian(
+    numbers: Tensor, positions: Tensor, charge: Tensor
+) -> Tensor:
     gradient = torch.zeros(torch.Size((*2 * (numbers.shape[-1],), 3)))
     step = 1.0e-6
 
