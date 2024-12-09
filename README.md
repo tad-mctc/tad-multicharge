@@ -98,7 +98,7 @@ conda install tad-multicharge
 
 ### From source
 
-This project is hosted on GitHub at `tad-mctc/tad-multicharge <https://github.com/tad-mctc/tad-multicharge>`__.
+This project is hosted on GitHub at [tad-mctc/tad-multicharge](https://github.com/tad-mctc/tad-multicharge>).
 Obtain the source by cloning the repository with
 
 ```sh
