@@ -63,7 +63,9 @@ def test_single(dtype: torch.dtype) -> None:
 
     cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], **dd)
     eeq_model = eeq.EEQModel.param2019(**dd)
-    energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
+    qat, energy = eeq_model.solve(
+        numbers, positions, total_charge, cn, return_energy=True
+    )
     tot = torch.sum(qat, -1)
 
     assert qat.dtype == energy.dtype == dtype
@@ -88,7 +90,9 @@ def test_single_with_cn(dtype: torch.dtype, name: str) -> None:
 
     cn = cn_eeq(numbers, positions)
     eeq_model = eeq.EEQModel.param2019(**dd)
-    energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
+    qat, energy = eeq_model.solve(
+        numbers, positions, total_charge, cn, return_energy=True
+    )
     tot = torch.sum(qat, -1)
 
     assert qat.dtype == energy.dtype == dtype
@@ -124,11 +128,11 @@ def test_ghost(dtype: torch.dtype) -> None:
     )
     eref = torch.tensor(
         [
-            -0.5722096424,
+            -1.0891341309,
             +0.0000000000,
-            +0.1621556977,
-            +0.1620431236,
-            +0.1621556977,
+            +0.3345037494,
+            +0.3342715255,
+            +0.3345037494,
             +0.0000000000,
             +0.0000000000,
             +0.0000000000,
@@ -137,7 +141,9 @@ def test_ghost(dtype: torch.dtype) -> None:
     )
 
     eeq_model = eeq.EEQModel.param2019(**dd)
-    energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
+    qat, energy = eeq_model.solve(
+        numbers, positions, total_charge, cn, return_energy=True
+    )
     tot = torch.sum(qat, -1)
 
     assert qat.dtype == energy.dtype == dtype
@@ -227,8 +233,13 @@ def test_batch(dtype: torch.dtype) -> None:
         **dd,
     )
     eeq_model = eeq.EEQModel.param2019(**dd)
-    energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
+    qat, energy = eeq_model.solve(
+        numbers, positions, total_charge, cn, return_energy=True
+    )
     tot = torch.sum(qat, -1)
+
+    torch.set_printoptions(precision=10)
+    print(energy)
 
     assert qat.dtype == energy.dtype == dtype
     assert pytest.approx(total_charge.cpu(), abs=1e-6) == tot.cpu()

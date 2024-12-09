@@ -62,11 +62,16 @@
 PyTorch implementation of the electronegativity equilibration (EEQ) model for atomic partial charges.
 This module allows to process a single structure or a batch of structures for the calculation of atom-resolved dispersion energies.
 
+If you use this software, please cite the following publication
+
+- M. Friede, C. Hölzer, S. Ehlert, S. Grimme, *J. Chem. Phys.*, **2024**, *161*, 062501. DOI: [10.1063/5.0216715](https://doi.org/10.1063/5.0216715)
+
+
 For details on the EEQ model, see
 
-- \S. A. Ghasemi, A. Hofstetter, S. Saha, and S. Goedecker, *Phys. Rev. B*, **2015**, *92*, 045131. DOI: [10.1103/PhysRevB.92.045131](https://doi.org/10.1103/PhysRevB.92.045131)
+- S. A. Ghasemi, A. Hofstetter, S. Saha, and S. Goedecker, *Phys. Rev. B*, **2015**, *92*, 045131. DOI: [10.1103/PhysRevB.92.045131](https://doi.org/10.1103/PhysRevB.92.045131)
 
-- \E. Caldeweyher, S. Ehlert, A. Hansen, H. Neugebauer, S. Spicher, C. Bannwarth and S. Grimme, *J. Chem. Phys.*, **2019**, *150*, 154122. DOI: [10.1063/1.5090222](https://dx.doi.org/10.1063/1.5090222)
+- E. Caldeweyher, S. Ehlert, A. Hansen, H. Neugebauer, S. Spicher, C. Bannwarth and S. Grimme, *J. Chem. Phys.*, **2019**, *150*, 154122. DOI: [10.1063/1.5090222](https://dx.doi.org/10.1063/1.5090222)
 
 
 For alternative implementations, also check out
@@ -205,7 +210,9 @@ total_charge = torch.tensor(0.0)
 cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 
 eeq_model = eeq.EEQModel.param2019()
-energy, qat = eeq_model.solve(numbers, positions, total_charge, cn)
+qat, energy = eeq_model.solve(
+    numbers, positions, total_charge, cn, return_energy=True
+)
 
 print(torch.sum(energy, -1))
 # tensor(-0.1750)

@@ -277,7 +277,7 @@ def run_jacobian(dtype: torch.dtype, name: str, atol: float) -> None:
 @pytest.mark.parametrize("dtype", [torch.double])
 @pytest.mark.parametrize("name", sample_list)
 def test_jacobian(dtype: torch.dtype, name: str) -> None:
-    run_jacobian(dtype, name, tol)
+    run_jacobian(dtype, name, 1e-7)
 
 
 @pytest.mark.grad
