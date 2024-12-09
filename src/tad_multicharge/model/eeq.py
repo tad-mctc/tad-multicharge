@@ -57,14 +57,7 @@ from tad_mctc.batch import real_atoms, real_pairs
 from tad_mctc.ncoord import cn_eeq, erf_count
 
 from ..param import defaults, eeq2019
-from ..typing import (
-    DD,
-    Any,
-    CountingFunction,
-    Tensor,
-    get_default_dtype,
-    overload,
-)
+from ..typing import DD, Any, CountingFunction, Tensor, get_default_dtype, overload
 from .base import ChargeModel
 
 __all__ = ["EEQModel", "get_charges"]
@@ -261,9 +254,7 @@ class EEQModel(ChargeModel):
         matrix = torch.concat(
             (
                 torch.concat((coulomb, constraint.unsqueeze(-1)), dim=-1),
-                torch.concat(
-                    (constraint, zeros.unsqueeze(-1)), dim=-1
-                ).unsqueeze(-2),
+                torch.concat((constraint, zeros.unsqueeze(-1)), dim=-1).unsqueeze(-2),
             ),
             dim=-2,
         )
@@ -428,6 +419,4 @@ def get_energy(
     Tensor
         Atomic energies.
     """
-    return get_eeq(numbers, positions, chrg, cutoff=cutoff, return_energy=True)[
-        1
-    ]
+    return get_eeq(numbers, positions, chrg, cutoff=cutoff, return_energy=True)[1]
