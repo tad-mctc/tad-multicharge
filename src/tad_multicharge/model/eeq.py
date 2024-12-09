@@ -61,7 +61,6 @@ from ..typing import (
     DD,
     Any,
     CountingFunction,
-    Literal,
     Tensor,
     get_default_dtype,
     overload,
@@ -158,6 +157,8 @@ class EEQModel(ChargeModel):
             Charge model to use.
         cn : Tensor
             Coordination numbers for all atoms in the system.
+        return_energy : bool, optional
+            Return the EEQ energy as well. Defaults to `False`.
 
         Returns
         -------
@@ -260,7 +261,9 @@ class EEQModel(ChargeModel):
         matrix = torch.concat(
             (
                 torch.concat((coulomb, constraint.unsqueeze(-1)), dim=-1),
-                torch.concat((constraint, zeros.unsqueeze(-1)), dim=-1).unsqueeze(-2),
+                torch.concat(
+                    (constraint, zeros.unsqueeze(-1)), dim=-1
+                ).unsqueeze(-2),
             ),
             dim=-2,
         )
@@ -271,7 +274,7 @@ class EEQModel(ChargeModel):
         if return_energy is False:
             return x[..., :-1]
 
-        # remove constraint
+        # remove constraint for energy calculation
         _x = x[..., :-1]
         _m = matrix[..., :-1, :-1]
         _rhs = rhs[..., :-1]
@@ -350,6 +353,8 @@ def get_eeq(
         Steepness of the counting function.
     return_energy : bool, optional
         Return the EEQ energy as well. Defaults to `False`.
+    **kwargs : Any
+        Additional keyword arguments for EEQ CN calculation.
 
     Returns
     -------
@@ -423,4 +428,6 @@ def get_energy(
     Tensor
         Atomic energies.
     """
-    return get_eeq(numbers, positions, chrg, cutoff=cutoff, return_energy=True)[1]
+    return get_eeq(numbers, positions, chrg, cutoff=cutoff, return_energy=True)[
+        1
+    ]
