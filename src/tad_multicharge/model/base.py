@@ -84,7 +84,8 @@ class ChargeModel(TensorLike):
         positions: Tensor,
         total_charge: Tensor,
         cn: Tensor,
-    ) -> tuple[Tensor, Tensor]:
+        return_energy: bool = False,
+    ) -> Tensor | tuple[Tensor, Tensor]:
         """
         Solve the electronegativity equilibration for the partial charges
         minimizing the electrostatic energy.
@@ -93,17 +94,22 @@ class ChargeModel(TensorLike):
         ----------
         numbers : Tensor
             Atomic numbers of all atoms in the system.
+            (shape: ``(..., nat)``).
         positions : Tensor
-            Cartesian coordinates of the atoms in the system (batch, natoms, 3).
+            Cartesian coordinates of the atoms in system
+            (shape: ``(..., nat, 3)``).
         total_charge : Tensor
             Total charge of the system.
         model : ChargeModel
             Charge model to use.
         cn : Tensor
             Coordination numbers for all atoms in the system.
+        return_energy : bool, optional
+            Return the EEQ energy as well. Defaults to `False`.
 
         Returns
         -------
-        (Tensor, Tensor)
-            Tuple of electrostatic energies and partial charges.
+        Tensor | (Tensor, Tensor)
+            Tensor of electrostatic charges or tuple of partial charges and
+            electrostatic energies if ``return_energy=True``.
         """

@@ -57,7 +57,15 @@ from tad_mctc.batch import real_atoms, real_pairs
 from tad_mctc.ncoord import cn_eeq, erf_count
 
 from ..param import defaults, eeq2019
-from ..typing import DD, Any, CountingFunction, Tensor, get_default_dtype, overload
+from ..typing import (
+    DD,
+    Any,
+    CountingFunction,
+    Literal,
+    Tensor,
+    get_default_dtype,
+    overload,
+)
 from .base import ChargeModel
 
 __all__ = ["EEQModel", "get_charges"]
@@ -113,20 +121,20 @@ class EEQModel(ChargeModel):
         positions: Tensor,
         total_charge: Tensor,
         cn: Tensor,
-        return_energy: bool = False,
+        return_energy: Literal[False],
     ) -> Tensor: ...
 
-    @overload
+    @overload  # type: ignore[no-redef]
     def solve(
         self,
         numbers: Tensor,
         positions: Tensor,
         total_charge: Tensor,
         cn: Tensor,
-        return_energy: bool = True,
+        return_energy: Literal[True],
     ) -> tuple[Tensor, Tensor]: ...
 
-    def solve(
+    def solve(  # type: ignore[no-redef]
         self,
         numbers: Tensor,
         positions: Tensor,
@@ -142,12 +150,12 @@ class EEQModel(ChargeModel):
         ----------
         numbers : Tensor
             Atomic numbers of all atoms in the system.
+            (shape: ``(..., nat)``).
         positions : Tensor
-            Cartesian coordinates of the atoms in the system (batch, natoms, 3).
+            Cartesian coordinates of the atoms in system
+            (shape: ``(..., nat, 3)``).
         total_charge : Tensor
             Total charge of the system.
-        model : ChargeModel
-            Charge model to use.
         cn : Tensor
             Coordination numbers for all atoms in the system.
         return_energy : bool, optional
@@ -288,12 +296,12 @@ def get_eeq(
     cutoff: Tensor | float | int | None = defaults.EEQ_CN_CUTOFF,
     cn_max: Tensor | float | int | None = defaults.EEQ_CN_MAX,
     kcn: Tensor | float | int = defaults.EEQ_KCN,
-    return_energy: bool = False,
+    return_energy: Literal[False],
     **kwargs: Any,
 ) -> Tensor: ...
 
 
-@overload
+@overload  # type: ignore[no-redef]
 def get_eeq(
     numbers: Tensor,
     positions: Tensor,
@@ -303,12 +311,13 @@ def get_eeq(
     rcov: Tensor | None = None,
     cutoff: Tensor | float | int | None = defaults.EEQ_CN_CUTOFF,
     cn_max: Tensor | float | int | None = defaults.EEQ_CN_MAX,
-    return_energy: bool = True,
+    kcn: Tensor | float | int = defaults.EEQ_KCN,
+    return_energy: Literal[True],
     **kwargs: Any,
-) -> Tensor | tuple[Tensor, Tensor]: ...
+) -> tuple[Tensor, Tensor]: ...
 
 
-def get_eeq(
+def get_eeq(  # type: ignore[no-redef]
     numbers: Tensor,
     positions: Tensor,
     chrg: Tensor,
@@ -419,4 +428,10 @@ def get_energy(
     Tensor
         Atomic energies.
     """
-    return get_eeq(numbers, positions, chrg, cutoff=cutoff, return_energy=True)[1]
+    return get_eeq(
+        numbers,
+        positions,
+        chrg,
+        cutoff=cutoff,
+        return_energy=True,
+    )[1]
