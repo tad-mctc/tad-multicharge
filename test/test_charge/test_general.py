@@ -144,3 +144,15 @@ def test_solve_device_different() -> None:
         model.solve(cpu_tensor, cuda_tensor, cpu_tensor, cpu_tensor)
 
     assert "must be on the same device!" in str(exc.value)
+
+
+def test_solve_shape_fail() -> None:
+    numbers = torch.ones((1, 5), dtype=torch.long)
+    positions = torch.ones((1, 5, 3), dtype=torch.float64)
+
+    charge = torch.tensor([1.0], dtype=torch.float64)
+    model = eeq.EEQModel.param2019(dtype=torch.float64)
+
+    # Shape of charge must be (1, 5) too
+    with pytest.raises(ValueError):
+        model.solve(numbers, positions, charge, numbers)

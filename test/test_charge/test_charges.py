@@ -173,7 +173,7 @@ def test_batch(dtype: torch.dtype) -> None:
             sample2["positions"].to(**dd),
         )
     )
-    total_charge = torch.tensor([0.0, 0.0], **dd)
+    total_charge = torch.tensor([0.0, 0.0], **dd).view(-1, 1)
     eref = pack(
         (
             sample1["energy"].to(**dd),
@@ -236,10 +236,7 @@ def test_batch(dtype: torch.dtype) -> None:
     qat, energy = eeq_model.solve(
         numbers, positions, total_charge, cn, return_energy=True
     )
-    tot = torch.sum(qat, -1)
-
-    torch.set_printoptions(precision=10)
-    print(energy)
+    tot = torch.sum(qat, -1).view(-1, 1)
 
     assert qat.dtype == energy.dtype == dtype
     assert pytest.approx(total_charge.cpu(), abs=1e-6) == tot.cpu()

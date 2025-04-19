@@ -121,7 +121,7 @@ class EEQModel(ChargeModel):
         positions: Tensor,
         total_charge: Tensor,
         cn: Tensor,
-        return_energy: Literal[False],
+        return_energy: Literal[False] = False,
     ) -> Tensor: ...
 
     @overload  # type: ignore[no-redef]
@@ -131,7 +131,7 @@ class EEQModel(ChargeModel):
         positions: Tensor,
         total_charge: Tensor,
         cn: Tensor,
-        return_energy: Literal[True],
+        return_energy: Literal[True] = True,
     ) -> tuple[Tensor, Tensor]: ...
 
     def solve(  # type: ignore[no-redef]
@@ -206,6 +206,21 @@ class EEQModel(ChargeModel):
                 f"Use `{name}.param2019(dtype=dtype)` to correctly set it."
             )
 
+        total_charge = torch.atleast_1d(total_charge)
+
+        # Attempt reshaping to proper batch shape: (n,) -> (n, 1)
+        if total_charge.ndim == 1:
+            if len(total_charge) != 1:
+                total_charge = total_charge.view(-1, 1)
+
+        if total_charge.ndim != numbers.ndim:
+            raise ValueError(
+                f"Total charge must have the same number of dimensions as "
+                f"the atomic numbers tensor. Got\n"
+                f"- atomic numbers: {numbers.shape}\n"
+                f"- total charge:   {total_charge.shape}"
+            )
+
         eps = torch.tensor(torch.finfo(positions.dtype).eps, **self.dd)
         zero = torch.tensor(0.0, **self.dd)
         stop = torch.sqrt(torch.tensor(2.0 / math.pi, **self.dd))  # sqrt(2/pi)
@@ -226,7 +241,7 @@ class EEQModel(ChargeModel):
             -self.chi[numbers] + storch.sqrt(cn) * self.kcn[numbers],
             zero,
         )
-        rhs = torch.concat((cc, total_charge.unsqueeze(-1)), dim=-1)
+        rhs = torch.concat((cc, total_charge), dim=-1)
 
         # radii
         rad = self.rad[numbers]
@@ -262,7 +277,9 @@ class EEQModel(ChargeModel):
         matrix = torch.concat(
             (
                 torch.concat((coulomb, constraint.unsqueeze(-1)), dim=-1),
-                torch.concat((constraint, zeros.unsqueeze(-1)), dim=-1).unsqueeze(-2),
+                torch.concat(
+                    (constraint, zeros.unsqueeze(-1)), dim=-1
+                ).unsqueeze(-2),
             ),
             dim=-2,
         )
@@ -336,23 +353,26 @@ def get_eeq(  # type: ignore[no-redef]
     Parameters
     ----------
     numbers : Tensor
-        Atomic numbers of all atoms in the system.
+        Atomic numbers for all atoms in the system of shape ``(..., nat)``.
     positions : Tensor
-        Cartesian coordinates of the atoms in the system (batch, natoms, 3).
+        Cartesian coordinates of all atoms (shape: ``(..., nat, 3)``).
     chrg : Tensor
         Total charge of system.
     counting_function : CountingFunction
-        Calculate weight for pairs. Defaults to `erf_count`.
+        Calculate weight for pairs.
+        Defaults to :func:`tad_mctc.ncoord.erf_count`.
     rcov : Tensor | None, optional
-        Covalent radii for each species. Defaults to `None`.
+        Covalent radii for each species. Defaults to ``None``.
     cutoff : Tensor | float | int | None, optional
-        Real-space cutoff. Defaults to `defaults.CUTOFF_EEQ`.
+        Real-space cutoff.
+        Defaults to :data:`tad_multicharge.defaults.CUTOFF_EEQ`.
     cn_max : Tensor | float | int | None, optional
-        Maximum coordination number. Defaults to `defaults.CUTOFF_EEQ_MAX`.
+        Maximum coordination number.
+        Defaults to :data:`tad_multicharge.defaults.CUTOFF_EEQ_MAX`.
     kcn : Tensor | float | int, optional
         Steepness of the counting function.
     return_energy : bool, optional
-        Return the EEQ energy as well. Defaults to `False`.
+        Return the EEQ energy as well. Defaults to ``False``.
     **kwargs : Any
         Additional keyword arguments for EEQ CN calculation.
 
@@ -387,13 +407,13 @@ def get_charges(
     Parameters
     ----------
     numbers : Tensor
-        Atomic numbers of all atoms in the system.
+        Atomic numbers for all atoms in the system of shape ``(..., nat)``.
     positions : Tensor
-        Cartesian coordinates of the atoms in the system (batch, natoms, 3).
+        Cartesian coordinates of all atoms (shape: ``(..., nat, 3)``).
     chrg : Tensor
         Total charge of system.
     cutoff : Tensor | None, optional
-        Real-space cutoff. Defaults to `None`.
+        Real-space cutoff. Defaults to ``None``.
 
     Returns
     -------
@@ -415,13 +435,13 @@ def get_energy(
     Parameters
     ----------
     numbers : Tensor
-        Atomic numbers of all atoms in the system.
+        Atomic numbers for all atoms in the system of shape ``(..., nat)``.
     positions : Tensor
-        Cartesian coordinates of the atoms in the system (batch, natoms, 3).
+        Cartesian coordinates of all atoms (shape: ``(..., nat, 3)``).
     chrg : Tensor
         Total charge of system.
     cutoff : Tensor | None, optional
-        Real-space cutoff. Defaults to `None`.
+        Real-space cutoff. Defaults to ``None``.
 
     Returns
     -------
