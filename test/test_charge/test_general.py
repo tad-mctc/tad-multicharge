@@ -153,6 +153,6 @@ def test_solve_shape_fail() -> None:
     charge = torch.tensor([1.0], dtype=torch.float64)
     model = eeq.EEQModel.param2019(dtype=torch.float64)
 
-    # all tensor must have the same type
+    # Shape of charge must be (1, 5) too
     with pytest.raises(ValueError):
         model.solve(numbers, positions, charge, numbers)
