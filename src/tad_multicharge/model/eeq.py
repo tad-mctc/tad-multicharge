@@ -213,6 +213,14 @@ class EEQModel(ChargeModel):
             if len(total_charge) != 1:
                 total_charge = total_charge.view(-1, 1)
 
+        if total_charge.ndim != numbers.ndim:
+            raise ValueError(
+                f"Total charge must have the same number of dimensions as "
+                f"the atomic numbers tensor. Got\n"
+                f"- atomic numbers: {numbers.shape}\n"
+                f"- total charge:   {total_charge.shape}"
+            )
+
         eps = torch.tensor(torch.finfo(positions.dtype).eps, **self.dd)
         zero = torch.tensor(0.0, **self.dd)
         stop = torch.sqrt(torch.tensor(2.0 / math.pi, **self.dd))  # sqrt(2/pi)
