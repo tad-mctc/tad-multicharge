@@ -23,7 +23,9 @@ total_charge = torch.tensor(0.0)
 cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 
 eeq_model = eeq.EEQModel.param2019()
-qat, energy = eeq_model.solve(numbers, positions, total_charge, cn, return_energy=True)
+qat, energy = eeq_model.solve(
+    numbers, positions, total_charge, cn, return_energy=True
+)
 
 print(torch.sum(energy, -1))
 # tensor(-0.1750)
