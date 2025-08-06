@@ -28,6 +28,9 @@ from tad_multicharge.typing import Molecule, Tensor, TypedDict
 class Refs(TypedDict):
     """Format of reference values."""
 
+    charge: Tensor
+    """Total charge of the molecule."""
+
     grad: Tensor
     """Nuclear gradient (reference with TPSS0 parameters)."""
 
@@ -39,6 +42,7 @@ class Record(Molecule, Refs):
 refs: dict[str, Refs] = {
     "LiH": Refs(
         {
+            "charge": torch.tensor(0.0, dtype=torch.double),
             "grad": torch.tensor(
                 [
                     [
@@ -58,6 +62,7 @@ refs: dict[str, Refs] = {
     ),
     "SiH4": Refs(
         {
+            "charge": torch.tensor(0.0, dtype=torch.double),
             "grad": torch.tensor(
                 [
                     [
@@ -92,6 +97,7 @@ refs: dict[str, Refs] = {
     ),
     "AmF3": Refs(
         {
+            "charge": torch.tensor(0.0, dtype=torch.double),
             "grad": torch.tensor(
                 [
                     [
@@ -121,6 +127,7 @@ refs: dict[str, Refs] = {
     ),
     "PbH4-BiH3": Refs(
         {
+            "charge": torch.tensor(0.0, dtype=torch.double),
             "grad": torch.tensor(
                 [
                     [
@@ -175,6 +182,7 @@ refs: dict[str, Refs] = {
     ),
     "MB16_43_01": Refs(
         {
+            "charge": torch.tensor(0.0, dtype=torch.double),
             "grad": torch.tensor(
                 [
                     [
@@ -264,6 +272,7 @@ refs: dict[str, Refs] = {
     ),
     "MB16_43_02": Refs(
         {
+            "charge": torch.tensor(0.0, dtype=torch.double),
             "grad": torch.tensor(
                 [
                     [
@@ -353,6 +362,7 @@ refs: dict[str, Refs] = {
     ),
     "vancoh2": Refs(
         {
+            "charge": torch.tensor(0.0, dtype=torch.double),
             "grad": torch.tensor(
                 [
                     [
@@ -1242,6 +1252,7 @@ refs: dict[str, Refs] = {
     ),
     "Ag2Cl22-": Refs(
         {
+            "charge": torch.tensor(-2.0, dtype=torch.double),
             "grad": torch.tensor(
                 [],
                 dtype=torch.double,
@@ -1250,6 +1261,7 @@ refs: dict[str, Refs] = {
     ),
     "ZnOOH-": Refs(
         {
+            "charge": torch.tensor(-1.0, dtype=torch.double),
             "grad": torch.tensor(
                 [],
                 dtype=torch.double,

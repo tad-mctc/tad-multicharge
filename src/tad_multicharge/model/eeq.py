@@ -131,7 +131,7 @@ class EEQModel(ChargeModel):
         positions: Tensor,
         total_charge: Tensor,
         cn: Tensor,
-        return_energy: Literal[True] = True,
+        return_energy: Literal[True],
     ) -> tuple[Tensor, Tensor]: ...
 
     def solve(  # type: ignore[no-redef]
