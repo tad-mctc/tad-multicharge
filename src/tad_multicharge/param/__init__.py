@@ -20,4 +20,5 @@ Parameters
 
 This module contains the parametrizations of the charge models.
 """
+
 from .eeq2019 import *

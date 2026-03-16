@@ -24,6 +24,7 @@ Electronegativity equilibration charge model published in
   and S. Grimme, *J. Chem. Phys.*, **2019**, 150, 154122.
   DOI: `10.1063/1.5090222 <https://dx.doi.org/10.1063/1.5090222>`__
 """
+
 import torch
 
 __all__ = ["chi", "eta", "kcn", "rad"]
