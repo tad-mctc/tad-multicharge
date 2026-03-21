@@ -78,11 +78,14 @@ class ChargeModel(ModuleLike):
                 for tensor in tensors
             )
 
-        for name, tensor in zip(
-            ("chi", "kcn", "eta", "rad"),
-            tensors,
-            strict=True,
-        ):
+        names = ("chi", "kcn", "eta", "rad")
+
+        if len(names) != len(tensors):  # pragma: no cover
+            raise ValueError(
+                "The number of names and tensors must match exactly."
+            )
+
+        for name, tensor in zip(names, tensors):
             self.register_buffer(name, tensor)
 
     @overload
