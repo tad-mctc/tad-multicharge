@@ -25,10 +25,6 @@ Torch Autodiff Multicharge
     :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/ubuntu.yaml
     :alt: Test Status Ubuntu
 
-.. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos-x86.yaml/badge.svg
-    :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos-x86.yaml
-    :alt: Test Status macOS (x86)
-
 .. image:: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos-arm.yaml/badge.svg
     :target: https://github.com/tad-mctc/tad-multicharge/actions/workflows/macos-arm.yaml
     :alt: Test Status macOS (ARM)
