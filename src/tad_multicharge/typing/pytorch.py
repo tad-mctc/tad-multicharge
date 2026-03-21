@@ -24,6 +24,7 @@ PyTorch-related type annotations for this project.
 from tad_mctc.typing import (
     DD,
     CountingFunction,
+    ModuleLike,
     Molecule,
     Tensor,
     TensorLike,
@@ -34,6 +35,7 @@ from tad_mctc.typing import (
 __all__ = [
     "DD",
     "CountingFunction",
+    "ModuleLike",
     "Molecule",
     "Tensor",
     "TensorLike",

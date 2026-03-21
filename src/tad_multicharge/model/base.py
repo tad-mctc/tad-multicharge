@@ -24,15 +24,16 @@ Implementation of a base class for charge models.
 from __future__ import annotations
 
 from abc import abstractmethod
+from typing import Literal, overload
 
 import torch
 
-from ..typing import Tensor, TensorLike
+from ..typing import ModuleLike, Tensor
 
 __all__ = ["ChargeModel"]
 
 
-class ChargeModel(TensorLike):
+class ChargeModel(ModuleLike):
     """
     Model for electronegativity equilibration.
     """
@@ -49,8 +50,6 @@ class ChargeModel(TensorLike):
     rad: Tensor
     """Atomic radii for each element"""
 
-    __slots__ = ["chi", "kcn", "eta", "rad"]
-
     def __init__(
         self,
         chi: Tensor,
@@ -60,23 +59,67 @@ class ChargeModel(TensorLike):
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
-        super().__init__(device, dtype)
-        self.chi = chi
-        self.kcn = kcn
-        self.eta = eta
-        self.rad = rad
+        super().__init__()
+        tensors = (chi, kcn, eta, rad)
+        inferred_device = tensors[0].device
+        inferred_dtype = tensors[0].dtype
 
-        if any(
-            tensor.device != self.device
-            for tensor in (self.chi, self.kcn, self.eta, self.rad)
-        ):
-            raise RuntimeError("All tensors must be on the same device!")
+        target_device = device if device is not None else inferred_device
+        target_dtype = dtype if dtype is not None else inferred_dtype
 
-        if any(
-            tensor.dtype != self.dtype
-            for tensor in (self.chi, self.kcn, self.eta, self.rad)
-        ):
-            raise RuntimeError("All tensors must have the same dtype!")
+        self._validate_requested_dtype(target_dtype)
+
+        if device is None and dtype is None:
+            self._validate_tensor_devices(tensors, target_device)
+            self._validate_tensor_dtypes(tensors, target_dtype)
+        else:
+            tensors = tuple(
+                tensor.to(device=target_device, dtype=target_dtype)
+                for tensor in tensors
+            )
+
+        names = ("chi", "kcn", "eta", "rad")
+
+        if len(names) != len(tensors):  # pragma: no cover
+            raise ValueError(
+                "The number of names and tensors must match exactly."
+            )
+
+        for name, tensor in zip(names, tensors):
+            self.register_buffer(name, tensor)
+
+    @overload
+    def solve(
+        self,
+        numbers: Tensor,
+        positions: Tensor,
+        total_charge: Tensor,
+        cn: Tensor,
+        return_energy: Literal[False] = ...,
+        solve_mode: Literal["schur", "linear"] = ...,
+    ) -> Tensor: ...
+
+    @overload
+    def solve(
+        self,
+        numbers: Tensor,
+        positions: Tensor,
+        total_charge: Tensor,
+        cn: Tensor,
+        return_energy: Literal[True],
+        solve_mode: Literal["schur", "linear"] = ...,
+    ) -> tuple[Tensor, Tensor]: ...
+
+    @overload
+    def solve(
+        self,
+        numbers: Tensor,
+        positions: Tensor,
+        total_charge: Tensor,
+        cn: Tensor,
+        return_energy: bool,
+        solve_mode: Literal["schur", "linear"] = ...,
+    ) -> Tensor | tuple[Tensor, Tensor]: ...
 
     @abstractmethod
     def solve(
@@ -86,6 +129,7 @@ class ChargeModel(TensorLike):
         total_charge: Tensor,
         cn: Tensor,
         return_energy: bool = False,
+        solve_mode: Literal["schur", "linear"] = "schur",
     ) -> Tensor | tuple[Tensor, Tensor]:
         """
         Solve the electronegativity equilibration for the partial charges
@@ -107,6 +151,13 @@ class ChargeModel(TensorLike):
             Coordination numbers for all atoms in the system.
         return_energy : bool, optional
             Return the EEQ energy as well. Defaults to `False`.
+        solve_mode : Literal["schur", "linear"], optional
+            Choose the solution method for the linear system.
+            - ``"schur"``: Use Schur-complement based method with Cholesky
+              factorization (default, recommended).
+            - ``"linear"``: Solve the full bordered linear system directly.
+              Less stable and slower for large systems.
+            Defaults to ``"schur"``.
 
         Returns
         -------

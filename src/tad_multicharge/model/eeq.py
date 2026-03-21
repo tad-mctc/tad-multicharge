@@ -51,22 +51,15 @@ tensor([-0.8347, -0.8347,  0.2731,  0.2886,  0.2731,  0.2731,  0.2886,  0.2731])
 from __future__ import annotations
 
 import math
+from typing import Literal, overload
 
 import torch
 from tad_mctc import storch
 from tad_mctc.batch import real_atoms, real_pairs
-from tad_mctc.ncoord import cn_eeq, erf_count
+from tad_mctc.ncoord import coordination_number, erf_count
 
 from ..param import defaults, eeq2019
-from ..typing import (
-    DD,
-    Any,
-    CountingFunction,
-    Literal,
-    Tensor,
-    get_default_dtype,
-    overload,
-)
+from ..typing import DD, Any, CountingFunction, Tensor, get_default_dtype
 from .base import ChargeModel
 
 __all__ = ["EEQModel", "get_charges"]
@@ -123,9 +116,10 @@ class EEQModel(ChargeModel):
         total_charge: Tensor,
         cn: Tensor,
         return_energy: Literal[False] = False,
+        solve_mode: Literal["schur", "linear"] = "schur",
     ) -> Tensor: ...
 
-    @overload  # type: ignore[no-redef]
+    @overload
     def solve(
         self,
         numbers: Tensor,
@@ -133,15 +127,28 @@ class EEQModel(ChargeModel):
         total_charge: Tensor,
         cn: Tensor,
         return_energy: Literal[True],
+        solve_mode: Literal["schur", "linear"] = "schur",
     ) -> tuple[Tensor, Tensor]: ...
 
-    def solve(  # type: ignore[no-redef]
+    @overload
+    def solve(
+        self,
+        numbers: Tensor,
+        positions: Tensor,
+        total_charge: Tensor,
+        cn: Tensor,
+        return_energy: bool,
+        solve_mode: Literal["schur", "linear"] = "schur",
+    ) -> Tensor | tuple[Tensor, Tensor]: ...
+
+    def solve(
         self,
         numbers: Tensor,
         positions: Tensor,
         total_charge: Tensor,
         cn: Tensor,
         return_energy: bool = False,
+        solve_mode: Literal["schur", "linear"] = "schur",
     ) -> Tensor | tuple[Tensor, Tensor]:
         """
         Solve the electronegativity equilibration for the partial charges
@@ -161,6 +168,13 @@ class EEQModel(ChargeModel):
             Coordination numbers for all atoms in the system.
         return_energy : bool, optional
             Return the EEQ energy as well. Defaults to `False`.
+        solve_mode : Literal["schur", "linear"], optional
+            Choose the solution method for the linear system.
+            - ``"schur"``: Use Schur-complement based method with Cholesky
+              factorization (default, recommended).
+            - ``"linear"``: Solve the full bordered linear system directly.
+              Less stable and slower for large systems.
+            Defaults to ``"schur"``.
 
         Returns
         -------
@@ -237,12 +251,19 @@ class EEQModel(ChargeModel):
         diagonal = mask.new_zeros(mask.shape)
         diagonal.diagonal(dim1=-2, dim2=-1).fill_(True)
 
+        #############
+        # Build RHS #
+        #############
+
         cc = torch.where(
             real,
             -self.chi[numbers] + storch.sqrt(cn) * self.kcn[numbers],
             zero,
         )
-        rhs = torch.concat((cc, total_charge), dim=-1)
+
+        ##################
+        # Build A matrix #
+        ##################
 
         # radii
         rad = self.rad[numbers]
@@ -266,12 +287,65 @@ class EEQModel(ChargeModel):
             ),
         )
 
+        ##############
+        # Constraint #
+        ##############
+
+        # Build 'ones' vector for the constraint
         constraint = torch.where(
             real,
             torch.ones(numbers.shape, **self.dd),
             torch.zeros(numbers.shape, **self.dd),
         )
-        zeros = torch.zeros(numbers.shape[:-1], **self.dd)
+
+        #######################
+        # Solve linear system #
+        #######################
+
+        if solve_mode == "schur":
+            return self._solve_schur(
+                cc, constraint, coulomb, total_charge, return_energy
+            )
+
+        if solve_mode == "linear":
+            return self._solve_linear(
+                cc, constraint, coulomb, total_charge, return_energy
+            )
+
+        raise ValueError(f"Unknown EEQ solve mode '{solve_mode}'!")
+
+    def _solve_linear(
+        self,
+        cc: Tensor,
+        constraint: Tensor,
+        coulomb: Tensor,
+        total_charge: Tensor,
+        return_energy: bool,
+    ) -> Tensor | tuple[Tensor, Tensor]:
+        """
+        Solve the EEQ linear system via standard linear solver.
+
+        Parameters
+        ----------
+        cc : Tensor
+            Right-hand side vector.
+        constraint : Tensor
+            Constraint vector (ones for real atoms, zeros else).
+        coulomb : Tensor
+            Coulomb interaction matrix.
+        total_charge : Tensor
+            Total charge of the system.
+        return_energy : bool
+            Whether to return the electrostatic energy as well.
+
+        Returns
+        -------
+        Tensor | (Tensor, Tensor)
+            Partial charges or tuple of partial charges and energies.
+        """
+        zeros = torch.zeros(cc.shape[:-1], **self.dd)
+
+        rhs = torch.concat((cc, total_charge), dim=-1)
 
         # | Coulomb    Constraint |
         # | Constraint     0      |
@@ -302,6 +376,73 @@ class EEQModel(ChargeModel):
 
         return _x, _e
 
+    def _solve_schur(
+        self,
+        cc: Tensor,
+        constraint: Tensor,
+        coulomb: Tensor,
+        total_charge: Tensor,
+        return_energy: bool,
+    ) -> Tensor | tuple[Tensor, Tensor]:
+        """
+        Solve the EEQ linear system via Schur-complement method.
+
+        [ A    C ][ q ] = [ b ]
+        [ C^T  0 ][ m ]   [ Q ]
+
+        q = A^{-1}(b - C m)
+        m = (C^T A^{-1} b - Q) / (C^T A^{-1} C)
+
+        Parameters
+        ----------
+        cc : Tensor
+            Right-hand side vector.
+        constraint : Tensor
+            Constraint vector (ones for real atoms, zeros else).
+        coulomb : Tensor
+            Coulomb interaction matrix.
+        total_charge : Tensor
+            Total charge of the system.
+        return_energy : bool
+            Whether to return the electrostatic energy as well.
+
+        Returns
+        -------
+        Tensor | (Tensor, Tensor)
+            Partial charges or tuple of partial charges and energies.
+        """
+        # Solve A X = B for two RHS at once: B = [b, 1].
+        # Stack along last dimension giving `(..., nat, 2)`.
+        B = torch.stack((cc, constraint), dim=-1)
+
+        # Factor once via Cholesky: A = L L^T
+        # (fast & stable since A is SPD; bordered systems is indefinite)
+        L = torch.linalg.cholesky(coulomb)  # (..., nat, nat)
+
+        # Solve A X = B for both RHS at once using the Cholesky factor
+        # X[..., :, 0] = A^{-1} b ;  X[..., :, 1] = A^{-1} C
+        X = torch.cholesky_solve(B, L)  # (..., nat, 2)
+        z = X[..., :, 0]  # A^{-1} b, (..., nat)
+        y = X[..., :, 1]  # A^{-1} C, (..., nat)
+
+        # m = (C^T z - Q) / (C^T y) ; shape (..., 1)
+        num = (constraint * z).sum(dim=-1, keepdim=True) - total_charge
+        den = (constraint * y).sum(dim=-1, keepdim=True)
+        m = num / den
+
+        # q = z - y * m (broadcast m over the `nat` dimension)
+        q = z - y * m  # (..., nat)
+
+        # Do not compute energy unless specifically requested
+        if return_energy is False:
+            return q
+
+        # E_scalar = 0.5 * x^T @ A @ x - b @ x^T
+        # E_vector =  x * (0.5 * A @ x - b)
+        e = q * (0.5 * torch.einsum("...ij,...j->...i", coulomb, q) - cc)
+
+        return q, e
+
 
 @overload
 def get_eeq(
@@ -319,7 +460,7 @@ def get_eeq(
 ) -> Tensor: ...
 
 
-@overload  # type: ignore[no-redef]
+@overload
 def get_eeq(
     numbers: Tensor,
     positions: Tensor,
@@ -335,7 +476,7 @@ def get_eeq(
 ) -> tuple[Tensor, Tensor]: ...
 
 
-def get_eeq(  # type: ignore[no-redef]
+def get_eeq(
     numbers: Tensor,
     positions: Tensor,
     chrg: Tensor,
@@ -346,6 +487,7 @@ def get_eeq(  # type: ignore[no-redef]
     cn_max: Tensor | float | int | None = defaults.EEQ_CN_MAX,
     kcn: Tensor | float | int = defaults.EEQ_KCN,
     return_energy: bool = False,
+    solve_mode: Literal["schur", "linear"] = "schur",
     **kwargs: Any,
 ) -> Tensor | tuple[Tensor, Tensor]:
     """
@@ -374,6 +516,13 @@ def get_eeq(  # type: ignore[no-redef]
         Steepness of the counting function.
     return_energy : bool, optional
         Return the EEQ energy as well. Defaults to ``False``.
+    solve_mode : Literal["schur", "linear"], optional
+        Choose the solution method for the linear system.
+        - ``"schur"``: Use Schur-complement based method with Cholesky
+          factorization (default, recommended).
+        - ``"linear"``: Solve the full bordered linear system directly.
+          Less stable and slower for large systems.
+        Defaults to ``"schur"``.
     **kwargs : Any
         Additional keyword arguments for EEQ CN calculation.
 
@@ -383,7 +532,7 @@ def get_eeq(  # type: ignore[no-redef]
         Tuple of electrostatic energies and partial charges.
     """
     eeq = EEQModel.param2019(device=positions.device, dtype=positions.dtype)
-    cn = cn_eeq(
+    cn = coordination_number(
         numbers,
         positions,
         counting_function=counting_function,
@@ -393,7 +542,15 @@ def get_eeq(  # type: ignore[no-redef]
         kcn=kcn,
         **kwargs,
     )
-    return eeq.solve(numbers, positions, chrg, cn, return_energy=return_energy)
+
+    return eeq.solve(
+        numbers,
+        positions,
+        chrg,
+        cn,
+        return_energy=return_energy,
+        solve_mode=solve_mode,
+    )
 
 
 def get_charges(
