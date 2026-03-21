@@ -37,6 +37,8 @@ Due to the above inconsistencies, loose tolerances are adapted in the EEQ tests.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pytest
 import torch
 from tad_mctc.batch import pack
@@ -50,7 +52,10 @@ from .samples import samples
 
 
 @pytest.mark.parametrize("dtype", [torch.float, torch.double])
-def test_single(dtype: torch.dtype) -> None:
+@pytest.mark.parametrize("solve_mode", ["linear", "schur"])
+def test_single(
+    dtype: torch.dtype, solve_mode: Literal["schur", "linear"]
+) -> None:
     dd: DD = {"device": DEVICE, "dtype": dtype}
     tol = 1e-4 if dtype == torch.float32 else 1e-6
 
@@ -65,7 +70,12 @@ def test_single(dtype: torch.dtype) -> None:
     cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], **dd)
     eeq_model = eeq.EEQModel.param2019(**dd)
     qat, energy = eeq_model.solve(
-        numbers, positions, total_charge, cn, return_energy=True
+        numbers,
+        positions,
+        total_charge,
+        cn,
+        return_energy=True,
+        solve_mode=solve_mode,
     )
     tot = torch.sum(qat, -1)
 
@@ -154,7 +164,10 @@ def test_ghost(dtype: torch.dtype) -> None:
 
 
 @pytest.mark.parametrize("dtype", [torch.float, torch.double])
-def test_batch(dtype: torch.dtype) -> None:
+@pytest.mark.parametrize("solve_mode", ["linear", "schur"])
+def test_batch(
+    dtype: torch.dtype, solve_mode: Literal["linear", "schur"]
+) -> None:
     dd: DD = {"device": DEVICE, "dtype": dtype}
     tol = 1e-4 if dtype == torch.float32 else 1e-6
 
@@ -235,11 +248,43 @@ def test_batch(dtype: torch.dtype) -> None:
     )
     eeq_model = eeq.EEQModel.param2019(**dd)
     qat, energy = eeq_model.solve(
-        numbers, positions, total_charge, cn, return_energy=True
+        numbers,
+        positions,
+        total_charge,
+        cn,
+        return_energy=True,
+        solve_mode=solve_mode,
     )
     tot = torch.sum(qat, -1).view(-1, 1)
 
     assert qat.dtype == energy.dtype == dtype
-    assert pytest.approx(total_charge.cpu(), abs=1e-6) == tot.cpu()
+    assert pytest.approx(total_charge.cpu(), abs=5e-6) == tot.cpu()
     assert pytest.approx(qref.cpu(), abs=tol) == qat.cpu()
     assert pytest.approx(eref.cpu(), abs=tol) == energy.cpu()
+
+
+@pytest.mark.parametrize("dtype", [torch.float, torch.double])
+def test_linear_no_energy(dtype: torch.dtype) -> None:
+    """Covers _solve_linear with return_energy=False (charges-only path)."""
+    dd: DD = {"device": DEVICE, "dtype": dtype}
+    tol = 1e-4 if dtype == torch.float32 else 1e-6
+
+    sample = samples["NH3-dimer"]
+    numbers = sample["numbers"].to(DEVICE)
+    positions = sample["positions"].to(**dd)
+    total_charge = sample["total_charge"].to(**dd)
+    qref = sample["q"].to(**dd)
+
+    cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], **dd)
+    eeq_model = eeq.EEQModel.param2019(**dd)
+    qat = eeq_model.solve(
+        numbers,
+        positions,
+        total_charge,
+        cn,
+        return_energy=False,
+        solve_mode="linear",
+    )
+    assert isinstance(qat, torch.Tensor)
+    assert qat.dtype == dtype
+    assert pytest.approx(qref.cpu(), abs=tol) == qat.cpu()

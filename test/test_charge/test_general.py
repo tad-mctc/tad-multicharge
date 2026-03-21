@@ -83,15 +83,12 @@ def test_init_dtype_fail() -> None:
 
 @pytest.mark.cuda
 def test_init_device_fail() -> None:
-    t = torch.rand(5)
-    if "cuda" in str(t.device):
-        t = t.cpu()
-    elif "cpu" in str(t.device):
-        t = t.cuda()
+    cpu_tensor = torch.rand(5, device=torch.device("cpu"))
+    cuda_tensor = cpu_tensor.to("cuda")
 
-    # all tensor must be on the same device
+    # tensors on different devices without specifying target must fail
     with pytest.raises(RuntimeError):
-        eeq.EEQModel(t, t, t, t)
+        eeq.EEQModel(cpu_tensor, cuda_tensor, cuda_tensor, cuda_tensor)
 
 
 def test_solve_dtype_fail() -> None:
@@ -157,3 +154,14 @@ def test_solve_shape_fail() -> None:
     # Shape of charge must be (1, 5) too
     with pytest.raises(ValueError):
         model.solve(numbers, positions, charge, numbers)
+
+
+def test_solve_unknown_mode_fail() -> None:
+    numbers = torch.tensor([7, 1, 1, 1])
+    positions = torch.zeros((4, 3), dtype=torch.float64)
+    charge = torch.tensor(0.0, dtype=torch.float64)
+    cn = torch.tensor([3.0, 1.0, 1.0, 1.0])
+    model = eeq.EEQModel.param2019(dtype=torch.float64)
+
+    with pytest.raises(ValueError, match="Unknown EEQ solve mode"):
+        model.solve(numbers, positions, charge, cn, solve_mode="invalid")  # type: ignore[arg-type]
