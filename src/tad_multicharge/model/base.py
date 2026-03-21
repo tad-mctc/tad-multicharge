@@ -107,6 +107,17 @@ class ChargeModel(ModuleLike):
         solve_mode: Literal["schur", "linear"] = ...,
     ) -> tuple[Tensor, Tensor]: ...
 
+    @overload
+    def solve(
+        self,
+        numbers: Tensor,
+        positions: Tensor,
+        total_charge: Tensor,
+        cn: Tensor,
+        return_energy: bool,
+        solve_mode: Literal["schur", "linear"] = ...,
+    ) -> Tensor | tuple[Tensor, Tensor]: ...
+
     @abstractmethod
     def solve(
         self,

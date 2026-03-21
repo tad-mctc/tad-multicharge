@@ -130,6 +130,17 @@ class EEQModel(ChargeModel):
         solve_mode: Literal["schur", "linear"] = "schur",
     ) -> tuple[Tensor, Tensor]: ...
 
+    @overload
+    def solve(
+        self,
+        numbers: Tensor,
+        positions: Tensor,
+        total_charge: Tensor,
+        cn: Tensor,
+        return_energy: bool,
+        solve_mode: Literal["schur", "linear"] = "schur",
+    ) -> Tensor | tuple[Tensor, Tensor]: ...
+
     def solve(
         self,
         numbers: Tensor,
@@ -531,6 +542,7 @@ def get_eeq(
         kcn=kcn,
         **kwargs,
     )
+
     return eeq.solve(
         numbers,
         positions,
