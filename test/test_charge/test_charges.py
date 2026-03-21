@@ -34,6 +34,7 @@ all tests were passing.
 
 Due to the above inconsistencies, loose tolerances are adapted in the EEQ tests.
 """
+
 from __future__ import annotations
 
 import pytest

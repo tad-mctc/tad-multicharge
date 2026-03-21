@@ -20,6 +20,7 @@ Model: Base Charge Model
 
 Implementation of a base class for charge models.
 """
+
 from __future__ import annotations
 
 from abc import abstractmethod
