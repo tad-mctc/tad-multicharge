@@ -78,6 +78,7 @@ Example
 >>> print(energy[0] - 2 * energy[1])
 >>> # tensor(-0.0142565966)
 """
+
 import torch
 
 from . import model, param, typing
