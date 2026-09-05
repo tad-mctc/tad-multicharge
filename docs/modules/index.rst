@@ -9,4 +9,3 @@ The following modules are contained with `tad_multicharge`.
 
    param/index
    model/index
-   typing/index

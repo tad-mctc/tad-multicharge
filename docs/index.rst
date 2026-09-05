@@ -163,9 +163,9 @@ The next example shows the calculation of the electrostatic energy with a simple
 
     torch.set_printoptions(precision=10)
     print(energy)
-    # tensor([-0.2086755037, -0.0972094536])
+    # tensor([-0.2086764276, -0.0972093940])
     print(energy[0] - 2 * energy[1])
-    # tensor(-0.0142565966)
+    # tensor(-0.0142576396)
 
 
 .. toctree::

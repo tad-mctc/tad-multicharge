@@ -27,8 +27,7 @@ from abc import abstractmethod
 from typing import Literal, overload
 
 import torch
-
-from ..typing import ModuleLike, Tensor
+from tad_mctc.typing import ModuleLike, Tensor
 
 __all__ = ["ChargeModel"]
 

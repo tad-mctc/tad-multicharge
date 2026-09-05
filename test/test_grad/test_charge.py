@@ -31,15 +31,17 @@ precision. For double precision, however the results are identical.
 
 from __future__ import annotations
 
+from typing import Callable
+
 import pytest
 import torch
 from tad_mctc.autograd import dgradcheck, dgradgradcheck
 from tad_mctc.batch import pack
 from tad_mctc.data.molecules import mols as samples
 from tad_mctc.ncoord import cn_eeq
+from tad_mctc.typing import DD, Tensor
 
 from tad_multicharge.model import eeq
-from tad_multicharge.typing import DD, Callable, Tensor
 
 from ..conftest import DEVICE, FAST_MODE
 

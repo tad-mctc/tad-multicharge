@@ -36,8 +36,8 @@ Example
 >>>
 >>> # S22 system 4: formamide dimer
 >>> numbers = mctc.batch.pack((
-...     mctc.data.pse.to_number("C C N N H H H H H H O O".split()),
-...     mctc.data.pse.to_number("C O N H H H".split()),
+...     mctc.convert.symbol_to_number("C C N N H H H H H H O O".split()),
+...     mctc.convert.symbol_to_number("C O N H H H".split()),
 ... ))
 >>>
 >>> # coordinates in Bohr
@@ -74,14 +74,14 @@ Example
 >>>
 >>> torch.set_printoptions(precision=10)
 >>> print(energy)
->>> # tensor([-0.2086755037, -0.0972094536])
+tensor([-0.2086764276, -0.0972093940])
 >>> print(energy[0] - 2 * energy[1])
->>> # tensor(-0.0142565966)
+tensor(-0.0142576396)
 """
 
 import torch
 
-from . import model, param, typing
+from . import model, param
 from .__version__ import __version__
 from .model import eeq
 from .model.eeq import get_charges as get_eeq_charges
@@ -91,6 +91,5 @@ __all__ = [
     "get_eeq_charges",
     "model",
     "param",
-    "typing",
     "eeq",
 ]
