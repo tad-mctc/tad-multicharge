@@ -170,10 +170,12 @@ class EEQModel(ChargeModel):
             Return the EEQ energy as well. Defaults to `False`.
         solve_mode : Literal["schur", "linear"], optional
             Choose the solution method for the linear system.
+
             - ``"schur"``: Use Schur-complement based method with Cholesky
               factorization (default, recommended).
             - ``"linear"``: Solve the full bordered linear system directly.
               Less stable and slower for large systems.
+
             Defaults to ``"schur"``.
 
         Returns

@@ -23,4 +23,4 @@ dependencies:
   - numpy
   - python>=3.8
   - pytorch>=2.3.0,<3
-  - tad-mctc>=0.0.2
+  - tad-mctc==0.8.0
