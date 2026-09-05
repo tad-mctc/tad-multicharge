@@ -1,2 +1,2 @@
-.. automodule:: tad_multicharge.defaults
+.. automodule:: tad_multicharge.param.defaults
    :members:

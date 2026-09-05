@@ -1,2 +1,2 @@
-.. automodule:: tad_multicharge.ncoord.eeq
+.. automodule:: tad_multicharge.param.eeq2019
    :members:
