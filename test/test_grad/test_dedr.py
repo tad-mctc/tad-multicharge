@@ -20,14 +20,16 @@ Testing energy gradient (autodiff).
 
 from __future__ import annotations
 
+from typing import Callable
+
 import pytest
 import torch
 from tad_mctc.autograd import dgradcheck, dgradgradcheck, jacrev
 from tad_mctc.batch import pack
 from tad_mctc.convert import tensor_to_numpy
+from tad_mctc.typing import DD, Tensor
 
 from tad_multicharge.model import eeq
-from tad_multicharge.typing import DD, Callable, Tensor
 
 from ..conftest import DEVICE, FAST_MODE
 from .samples_dedr import samples

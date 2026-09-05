@@ -20,10 +20,11 @@ Molecules for testing the charges module.
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 import torch
 from tad_mctc.data.molecules import merge_nested_dicts, mols
-
-from tad_multicharge.typing import Molecule, Tensor, TypedDict
+from tad_mctc.typing import Molecule, Tensor
 
 
 class Refs(TypedDict):

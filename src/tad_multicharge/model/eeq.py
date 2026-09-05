@@ -42,6 +42,7 @@ Example
 >>> qat, energy = eeq_model.solve(
 ...     numbers, positions, total_charge, cn, return_energy=True
 ... )
+>>> torch.set_printoptions(precision=4)
 >>> print(torch.sum(energy, -1))
 tensor(-0.1750)
 >>> print(qat)
@@ -51,15 +52,15 @@ tensor([-0.8347, -0.8347,  0.2731,  0.2886,  0.2731,  0.2731,  0.2886,  0.2731])
 from __future__ import annotations
 
 import math
-from typing import Literal, overload
+from typing import Any, Literal, overload
 
 import torch
 from tad_mctc import storch
 from tad_mctc.batch import real_atoms, real_pairs
 from tad_mctc.ncoord import coordination_number, erf_count
+from tad_mctc.typing import DD, CountingFunction, Tensor, get_default_dtype
 
 from ..param import defaults, eeq2019
-from ..typing import DD, Any, CountingFunction, Tensor, get_default_dtype
 from .base import ChargeModel
 
 __all__ = ["EEQModel", "get_charges"]
@@ -198,16 +199,19 @@ class EEQModel(ChargeModel):
         >>> total_charge = torch.tensor(0.0, requires_grad=True)
         >>> cn = torch.tensor([3.0, 1.0, 1.0, 1.0])
         >>> eeq_model = eeq.EEQModel.param2019()
-        >>> e = eeq_model.solve(numbers, positions, total_charge, cn)[0]
+        >>> _, e = eeq_model.solve(
+        ...     numbers, positions, total_charge, cn, return_energy=True
+        ... )
         >>> energy = torch.sum(e, -1)
         >>> energy.backward()
+        >>> torch.set_printoptions(precision=4)
         >>> print(positions.grad)
-        tensor([[-9.3132e-09,  7.4506e-09, -4.8064e-02],
+        tensor([[ 7.4506e-09,  1.1176e-08, -4.8064e-02],
                 [-1.2595e-02,  2.1816e-02,  1.6021e-02],
                 [-1.2595e-02, -2.1816e-02,  1.6021e-02],
-                [ 2.5191e-02, -6.9849e-10,  1.6021e-02]])
+                [ 2.5191e-02, -1.8626e-09,  1.6021e-02]])
         >>> print(total_charge.grad)
-        tensor(0.6312)
+        tensor(1.2625)
         """
         if self.device != positions.device:
             name = self.__class__.__name__

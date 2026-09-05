@@ -43,9 +43,9 @@ import pytest
 import torch
 from tad_mctc.batch import pack
 from tad_mctc.ncoord import cn_eeq
+from tad_mctc.typing import DD
 
 from tad_multicharge.model import eeq
-from tad_multicharge.typing import DD
 
 from ..conftest import DEVICE
 from .samples import samples

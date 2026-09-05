@@ -2,7 +2,4 @@ sphinx
 sphinx-book-theme
 sphinx-copybutton
 sphinx-design
-numpy
-tad_mctc
-torch
 jinja2>=3.1.6

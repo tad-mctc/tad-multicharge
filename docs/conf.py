@@ -23,8 +23,6 @@ import sys
 
 sys.path.insert(0, op.join(op.dirname(__file__), "..", "src"))
 
-import tad_multicharge
-
 project = "Torch Autodiff Multicharge"
 author = "Marvin Friede"
 copyright = f"2023 {author}"
@@ -65,9 +63,20 @@ html_static_path = ["_static"]
 templates_path = ["_templates"]
 
 autodoc_typehints = "none"
+# Documenting the sources requires no working PyTorch install: the compiled
+# dependencies are mocked so the docs build stays lightweight.
+autodoc_mock_imports = ["torch", "tad_mctc"]
 autosummary_generate = True
 napoleon_google_docstring = False
 napoleon_use_param = False
 napoleon_use_ivar = True
+
+# The mocked dependencies cannot be introspected, so types they own are
+# linked to their upstream documentation instead.
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "tad_mctc": ("https://tad-mctc.readthedocs.io/en/latest", None),
+    "torch": ("https://pytorch.org/docs/stable", None),
+}
 
 master_doc = "index"
