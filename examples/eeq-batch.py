@@ -2,6 +2,7 @@
 import torch
 from tad_mctc.batch import pack
 from tad_mctc.convert import symbol_to_number
+from tad_mctc.io.structure import Structure
 
 from tad_multicharge.model import eeq
 
@@ -45,13 +46,14 @@ positions = pack(
     )
 )
 
-# total charge of both system
+# total charge of both systems
 charge = torch.tensor([0.0, 0.0])
+structure = Structure(numbers=numbers, positions=positions, charge=charge)
 
 # calculate electrostatic energy in Hartree
-energy = torch.sum(eeq.get_energy(numbers, positions, charge), -1)
-torch.set_printoptions(precision=10)
+energy = torch.sum(eeq.get_energy(structure), -1)
+torch.set_printoptions(precision=4)
 print(energy)
-# tensor([-0.2086764276, -0.0972093940])
+# tensor([-0.2087, -0.0972])
 print(energy[0] - 2 * energy[1])
-# tensor(-0.0142576396)
+# tensor(-0.0143)

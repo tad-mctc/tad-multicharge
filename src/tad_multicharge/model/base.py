@@ -18,149 +18,191 @@
 Model: Base Charge Model
 ========================
 
-Implementation of a base class for charge models.
+Base class of the charge models.
+
+A charge model is a frozen :class:`~tad_mctc.tree.Node`: its parameters
+are pytree leaves, so a model can be passed through ``torch.func.vmap``,
+``jacrev``, ``jacfwd`` and ``torch.compile`` like a tensor, and the
+derivative with respect to all parameters is one ``jacrev`` over the model.
+A different parametrization is obtained with :meth:`~tad_mctc.tree.Node.replace`
+(e.g. ``model.replace(chi=chi)``), never by assignment.
 """
 
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from typing import Literal, overload
 
-import torch
-from tad_mctc.typing import ModuleLike, Tensor
+from tad_mctc.io.structure import Structure
+from tad_mctc.ncoord.common import CNModel
+from tad_mctc.tree import Node, child
+from tad_mctc.typing import Tensor
 
-__all__ = ["ChargeModel"]
+__all__ = ["ChargeModel", "SolveMode"]
 
 
-class ChargeModel(ModuleLike):
+SolveMode = Literal["schur", "linear"]
+"""Solution method of the linear system, see :meth:`ChargeModel.solve`."""
+
+_PARAMETERS = ("chi", "kcn", "eta", "rad")
+
+
+class ChargeModel(Node, ABC):
     """
     Model for electronegativity equilibration.
+
+    Parameters
+    ----------
+    chi : Tensor
+        Electronegativity for each element, shape ``(nelem,)``.
+    kcn : Tensor
+        Coordination number dependency of the electronegativity, shape
+        ``(nelem,)``.
+    eta : Tensor
+        Chemical hardness for each element, shape ``(nelem,)``.
+    rad : Tensor
+        Atomic radii for each element, shape ``(nelem,)``.
+    cn : CNModel
+        Coordination number used by :meth:`__call__`.
+
+    Raises
+    ------
+    TypeError
+        A parameter is not a floating-point tensor, or the parameters have
+        different dtypes.
+    ValueError
+        A parameter is not one-dimensional.
+    RuntimeError
+        The parameters are on different devices.
     """
 
-    chi: Tensor
-    """Electronegativity for each element"""
+    chi: Tensor = child()
+    kcn: Tensor = child()
+    eta: Tensor = child()
+    rad: Tensor = child()
+    cn: CNModel = child()
 
-    kcn: Tensor
-    """Coordination number dependency of the electronegativity"""
+    def _validate(self) -> None:
+        for name in _PARAMETERS:
+            value = getattr(self, name)
+            if not isinstance(value, Tensor) or not value.is_floating_point():
+                raise TypeError(
+                    f"{type(self).__name__}.{name} must be a floating-point "
+                    "tensor."
+                )
+            if value.ndim != 1:
+                raise ValueError(
+                    f"{type(self).__name__}.{name} must be one-dimensional "
+                    f"(one entry per element), got shape {tuple(value.shape)}."
+                )
 
-    eta: Tensor
-    """Chemical hardness for each element"""
-
-    rad: Tensor
-    """Atomic radii for each element"""
-
-    def __init__(
-        self,
-        chi: Tensor,
-        kcn: Tensor,
-        eta: Tensor,
-        rad: Tensor,
-        device: torch.device | None = None,
-        dtype: torch.dtype | None = None,
-    ) -> None:
-        super().__init__()
-        tensors = (chi, kcn, eta, rad)
-        inferred_device = tensors[0].device
-        inferred_dtype = tensors[0].dtype
-
-        target_device = device if device is not None else inferred_device
-        target_dtype = dtype if dtype is not None else inferred_dtype
-
-        self._validate_requested_dtype(target_dtype)
-
-        if device is None and dtype is None:
-            self._validate_tensor_devices(tensors, target_device)
-            self._validate_tensor_dtypes(tensors, target_dtype)
-        else:
-            tensors = tuple(
-                tensor.to(device=target_device, dtype=target_dtype)
-                for tensor in tensors
+    def _check_structure(self, structure: Structure) -> None:
+        """
+        Check that the model can be applied to the structure. Reads only
+        metadata, so it is safe under ``vmap`` and ``torch.compile``.
+        """
+        name = type(self).__name__
+        if structure.lattice is not None:
+            raise NotImplementedError(
+                f"'{name}' does not support periodic structures."
             )
 
-        names = ("chi", "kcn", "eta", "rad")
-
-        if len(names) != len(tensors):  # pragma: no cover
-            raise ValueError(
-                "The number of names and tensors must match exactly."
+        if self.device != structure.positions.device:
+            raise RuntimeError(
+                f"All tensors of '{name}' must be on the same device!\n"
+                f"Use `{name}.param2019(device=device)` or `.to(device)` to "
+                "correctly set it."
             )
 
-        for name, tensor in zip(names, tensors):
-            self.register_buffer(name, tensor)
+        if self.dtype != structure.positions.dtype:
+            raise RuntimeError(
+                f"All tensors of '{name}' must have the same dtype!\n"
+                f"Use `{name}.param2019(dtype=dtype)` or `.type(dtype)` to "
+                "correctly set it."
+            )
+
+    @staticmethod
+    def _total_charge(structure: Structure) -> Tensor:
+        """
+        Total charge of each structure, shape ``(..., 1)``. An absent
+        charge means neutral.
+        """
+        batch = structure.numbers.shape[:-1]
+        if structure.charge is None:
+            return structure.positions.new_zeros((*batch, 1))
+        return structure.charge.reshape(*batch, 1)
 
     @overload
-    def solve(
+    def __call__(
         self,
-        numbers: Tensor,
-        positions: Tensor,
-        total_charge: Tensor,
-        cn: Tensor,
+        structure: Structure,
+        *,
         return_energy: Literal[False] = ...,
-        solve_mode: Literal["schur", "linear"] = ...,
+        solve_mode: SolveMode = ...,
     ) -> Tensor: ...
 
     @overload
-    def solve(
+    def __call__(
         self,
-        numbers: Tensor,
-        positions: Tensor,
-        total_charge: Tensor,
-        cn: Tensor,
+        structure: Structure,
+        *,
         return_energy: Literal[True],
-        solve_mode: Literal["schur", "linear"] = ...,
+        solve_mode: SolveMode = ...,
     ) -> tuple[Tensor, Tensor]: ...
 
     @overload
-    def solve(
+    def __call__(
         self,
-        numbers: Tensor,
-        positions: Tensor,
-        total_charge: Tensor,
-        cn: Tensor,
+        structure: Structure,
+        *,
         return_energy: bool,
-        solve_mode: Literal["schur", "linear"] = ...,
+        solve_mode: SolveMode = ...,
     ) -> Tensor | tuple[Tensor, Tensor]: ...
 
-    @abstractmethod
-    def solve(
+    def __call__(
         self,
-        numbers: Tensor,
-        positions: Tensor,
-        total_charge: Tensor,
-        cn: Tensor,
+        structure: Structure,
+        *,
         return_energy: bool = False,
-        solve_mode: Literal["schur", "linear"] = "schur",
+        solve_mode: SolveMode = "schur",
     ) -> Tensor | tuple[Tensor, Tensor]:
         """
-        Solve the electronegativity equilibration for the partial charges
-        minimizing the electrostatic energy.
+        Compute the coordination number with :attr:`cn` and solve for the
+        partial charges (see :meth:`solve`).
 
         Parameters
         ----------
-        numbers : Tensor
-            Atomic numbers of all atoms in the system.
-            (shape: ``(..., nat)``).
-        positions : Tensor
-            Cartesian coordinates of the atoms in system
-            (shape: ``(..., nat, 3)``).
-        total_charge : Tensor
-            Total charge of the system.
-        cn : Tensor
-            Coordination numbers for all atoms in the system.
+        structure : Structure
+            The molecule(s) to evaluate.
         return_energy : bool, optional
-            Return the EEQ energy as well. Defaults to `False`.
-        solve_mode : Literal["schur", "linear"], optional
-            Choose the solution method for the linear system.
-
-            - ``"schur"``: Use Schur-complement based method with Cholesky
-              factorization (default, recommended).
-            - ``"linear"``: Solve the full bordered linear system directly.
-              Less stable and slower for large systems.
-
-            Defaults to ``"schur"``.
+            Return the atom-resolved energy as well. Defaults to ``False``.
+        solve_mode : SolveMode, optional
+            Solution method, see :meth:`solve`. Defaults to ``"schur"``.
 
         Returns
         -------
         Tensor | (Tensor, Tensor)
-            Tensor of electrostatic charges or tuple of partial charges and
-            electrostatic energies if ``return_energy=True``.
+            Partial charges, or partial charges and atom-resolved energies
+            if ``return_energy=True``.
+        """
+        return self.solve(
+            structure,
+            self.cn(structure),
+            return_energy=return_energy,
+            solve_mode=solve_mode,
+        )
+
+    @abstractmethod
+    def solve(
+        self,
+        structure: Structure,
+        cn: Tensor,
+        *,
+        return_energy: bool = False,
+        solve_mode: SolveMode = "schur",
+    ) -> Tensor | tuple[Tensor, Tensor]:
+        """
+        Solve for the partial charges (and atom-resolved energies if
+        ``return_energy=True``) of the structure with the coordination
+        numbers ``cn``. See :meth:`.EEQModel.solve`.
         """

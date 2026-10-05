@@ -15,30 +15,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Testing dispersion gradient (autodiff).
+Testing the gradient with respect to the model parameters (autodiff).
 """
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 import torch
 from tad_mctc.autograd import dgradcheck, dgradgradcheck
-from tad_mctc.batch import pack
-from tad_mctc.data.molecules import mols as samples
 from tad_mctc.ncoord import cn_eeq
 from tad_mctc.typing import DD, Tensor
 
 from tad_multicharge.model import eeq
 
 from ..conftest import DEVICE, FAST_MODE
+from ..utils import load_batch, load_structure
 
 sample_list = ["LiH", "AmF3", "SiH4", "MB16_43_01"]
 
 tol = 1e-8
-
-device = None
 
 
 def gradchecker(
@@ -46,20 +43,18 @@ def gradchecker(
 ) -> tuple[Callable[[Tensor], Tensor], Tensor]:
     dd: DD = {"device": DEVICE, "dtype": dtype}
 
-    sample = samples[name]
-    numbers = sample["numbers"].to(DEVICE)
-    positions = sample["positions"].to(**dd)
-    charge = torch.tensor(0.0, **dd)
+    structure = load_structure(name, dd, 0.0)
 
-    cn = cn_eeq(numbers, positions)
+    cn = cn_eeq(structure)
     model = eeq.EEQModel.param2019(**dd)
 
     # variable to be differentiated
     chi = model.chi.clone().requires_grad_(True)
 
     def func(_chi: Tensor) -> Tensor:
-        model.chi = _chi
-        return model.solve(numbers, positions, charge, cn)[1]
+        return model.replace(chi=_chi).solve(structure, cn, return_energy=True)[
+            1
+        ]
 
     return func, chi
 
@@ -93,30 +88,18 @@ def gradchecker_batch(
 ) -> tuple[Callable[[Tensor], Tensor], Tensor]:
     dd: DD = {"device": DEVICE, "dtype": dtype}
 
-    sample1, sample2 = samples[name1], samples[name2]
-    numbers = pack(
-        [
-            sample1["numbers"].to(DEVICE),
-            sample2["numbers"].to(DEVICE),
-        ]
-    )
-    positions = pack(
-        [
-            sample1["positions"].to(**dd),
-            sample2["positions"].to(**dd),
-        ]
-    )
-    charge = torch.tensor([0.0, 0.0], **dd)
+    structure = load_batch([name1, name2], dd)
 
-    cn = cn_eeq(numbers, positions)
+    cn = cn_eeq(structure)
     model = eeq.EEQModel.param2019(**dd)
 
     # variable to be differentiated
     chi = model.chi.clone().requires_grad_(True)
 
     def func(_chi: Tensor) -> Tensor:
-        model.chi = _chi
-        return model.solve(numbers, positions, charge, cn)[1]
+        return model.replace(chi=_chi).solve(structure, cn, return_energy=True)[
+            1
+        ]
 
     return func, chi
 

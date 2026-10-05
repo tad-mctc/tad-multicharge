@@ -24,6 +24,7 @@ atomic partial charges as well as atom-resolved electrostatic energies.
 Example
 -------
 >>> import torch
+>>> from tad_mctc.io.structure import Structure
 >>> from tad_multicharge import eeq
 >>> numbers = torch.tensor([7, 7, 1, 1, 1, 1, 1, 1])
 >>> positions = torch.tensor([
@@ -36,34 +37,36 @@ Example
 ...     [+1.60526800155640, -1.24380481243134, +0.00000000000000],
 ...     [+4.07920360565186, -0.25775116682053, +1.52985656261444],
 ... ])
->>> total_charge = torch.tensor(0.0)
+>>> structure = Structure(numbers=numbers, positions=positions)
 >>> cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 >>> eeq_model = eeq.EEQModel.param2019()
->>> qat, energy = eeq_model.solve(
-...     numbers, positions, total_charge, cn, return_energy=True
-... )
+>>> qat, energy = eeq_model.solve(structure, cn, return_energy=True)
 >>> torch.set_printoptions(precision=4)
 >>> print(torch.sum(energy, -1))
 tensor(-0.1750)
 >>> print(qat)
 tensor([-0.8347, -0.8347,  0.2731,  0.2886,  0.2731,  0.2731,  0.2886,  0.2731])
+>>> torch.set_printoptions(profile="default")
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any, Literal, overload
+from typing import Literal, overload
 
 import torch
 from tad_mctc import storch
 from tad_mctc.batch import real_atoms, real_pairs
-from tad_mctc.ncoord import coordination_number, erf_count
-from tad_mctc.typing import DD, CountingFunction, Tensor, get_default_dtype
+from tad_mctc.io.structure import Structure
+from tad_mctc.ncoord import cn_eeq
+from tad_mctc.ncoord.common import CNModel
+from tad_mctc.tree import child
+from tad_mctc.typing import DD, Tensor, get_default_dtype
 
-from ..param import defaults, eeq2019
-from .base import ChargeModel
+from ..param import eeq2019
+from .base import ChargeModel, SolveMode
 
-__all__ = ["EEQModel", "get_charges"]
+__all__ = ["EEQModel", "get_charges", "get_eeq", "get_energy"]
 
 
 class EEQModel(ChargeModel):
@@ -73,7 +76,14 @@ class EEQModel(ChargeModel):
     - E. Caldeweyher, S. Ehlert, A. Hansen, H. Neugebauer, S. Spicher,
       C. Bannwarth and S. Grimme, *J. Chem. Phys.*, **2019**, 150, 154122.
       DOI: `10.1063/1.5090222 <https://dx.doi.org/10.1063/1.5090222>`__
+
+    The coordination number defaults to :data:`tad_mctc.ncoord.cn_eeq`. A
+    different one is set with ``model.replace(cn=cn_eeq.replace(cutoff=...))``.
     """
+
+    # A factory, not `default=cn_eeq`: `torch.compile` cannot trace a `Node`
+    # as a plain field default when the model is built in compiled code.
+    cn: CNModel = child(default_factory=lambda: cn_eeq)
 
     @classmethod
     def param2019(
@@ -102,54 +112,49 @@ class EEQModel(ChargeModel):
         }
 
         return cls(
-            eeq2019.chi.to(**dd),
-            eeq2019.kcn.to(**dd),
-            eeq2019.eta.to(**dd),
-            eeq2019.rad.to(**dd),
-            **dd,
+            chi=eeq2019.chi.to(**dd),
+            kcn=eeq2019.kcn.to(**dd),
+            eta=eeq2019.eta.to(**dd),
+            rad=eeq2019.rad.to(**dd),
         )
 
     @overload
     def solve(
         self,
-        numbers: Tensor,
-        positions: Tensor,
-        total_charge: Tensor,
+        structure: Structure,
         cn: Tensor,
+        *,
         return_energy: Literal[False] = False,
-        solve_mode: Literal["schur", "linear"] = "schur",
+        solve_mode: SolveMode = "schur",
     ) -> Tensor: ...
 
     @overload
     def solve(
         self,
-        numbers: Tensor,
-        positions: Tensor,
-        total_charge: Tensor,
+        structure: Structure,
         cn: Tensor,
+        *,
         return_energy: Literal[True],
-        solve_mode: Literal["schur", "linear"] = "schur",
+        solve_mode: SolveMode = "schur",
     ) -> tuple[Tensor, Tensor]: ...
 
     @overload
     def solve(
         self,
-        numbers: Tensor,
-        positions: Tensor,
-        total_charge: Tensor,
+        structure: Structure,
         cn: Tensor,
-        return_energy: bool,
-        solve_mode: Literal["schur", "linear"] = "schur",
+        *,
+        return_energy: bool = False,
+        solve_mode: SolveMode = "schur",
     ) -> Tensor | tuple[Tensor, Tensor]: ...
 
     def solve(
         self,
-        numbers: Tensor,
-        positions: Tensor,
-        total_charge: Tensor,
+        structure: Structure,
         cn: Tensor,
+        *,
         return_energy: bool = False,
-        solve_mode: Literal["schur", "linear"] = "schur",
+        solve_mode: SolveMode = "schur",
     ) -> Tensor | tuple[Tensor, Tensor]:
         """
         Solve the electronegativity equilibration for the partial charges
@@ -157,19 +162,15 @@ class EEQModel(ChargeModel):
 
         Parameters
         ----------
-        numbers : Tensor
-            Atomic numbers of all atoms in the system.
-            (shape: ``(..., nat)``).
-        positions : Tensor
-            Cartesian coordinates of the atoms in system
-            (shape: ``(..., nat, 3)``).
-        total_charge : Tensor
-            Total charge of the system.
+        structure : Structure
+            The molecule(s) to evaluate. ``structure.charge`` is the total
+            charge; absent means neutral.
         cn : Tensor
-            Coordination numbers for all atoms in the system.
+            Coordination numbers for all atoms in the system, shape
+            ``(..., nat)``.
         return_energy : bool, optional
-            Return the EEQ energy as well. Defaults to `False`.
-        solve_mode : Literal["schur", "linear"], optional
+            Return the atom-resolved energy as well. Defaults to ``False``.
+        solve_mode : SolveMode, optional
             Choose the solution method for the linear system.
 
             - ``"schur"``: Use Schur-complement based method with Cholesky
@@ -182,12 +183,23 @@ class EEQModel(ChargeModel):
         Returns
         -------
         Tensor | (Tensor, Tensor)
-            Tensor of electrostatic charges or tuple of partial charges and
-            electrostatic energies if ``return_energy=True``.
+            Partial charges, or partial charges and atom-resolved energies
+            if ``return_energy=True``.
+
+        Raises
+        ------
+        NotImplementedError
+            The structure is periodic.
+        RuntimeError
+            The structure is on a different device or has a different dtype
+            than the model.
+        ValueError
+            ``solve_mode`` is unknown.
 
         Example
         -------
         >>> import torch
+        >>> from tad_mctc.io.structure import Structure
         >>> from tad_multicharge import eeq
         >>> numbers = torch.tensor([7, 1, 1, 1])
         >>> positions = torch.tensor([
@@ -197,65 +209,44 @@ class EEQModel(ChargeModel):
         ...     [+1.76903680764564, +0.00000000000000, +0.18174945999050],
         ... ], requires_grad=True)
         >>> total_charge = torch.tensor(0.0, requires_grad=True)
+        >>> structure = Structure(
+        ...     numbers=numbers, positions=positions, charge=total_charge
+        ... )
         >>> cn = torch.tensor([3.0, 1.0, 1.0, 1.0])
         >>> eeq_model = eeq.EEQModel.param2019()
-        >>> _, e = eeq_model.solve(
-        ...     numbers, positions, total_charge, cn, return_energy=True
-        ... )
+        >>> _, e = eeq_model.solve(structure, cn, return_energy=True)
         >>> energy = torch.sum(e, -1)
         >>> energy.backward()
         >>> torch.set_printoptions(precision=4)
-        >>> print(positions.grad)
-        tensor([[ 7.4506e-09,  1.1176e-08, -4.8064e-02],
-                [-1.2595e-02,  2.1816e-02,  1.6021e-02],
-                [-1.2595e-02, -2.1816e-02,  1.6021e-02],
-                [ 2.5191e-02, -1.8626e-09,  1.6021e-02]])
+        >>> print(positions.grad[:, 2])
+        tensor([-0.0481,  0.0160,  0.0160,  0.0160])
         >>> print(total_charge.grad)
         tensor(1.2625)
+        >>> torch.set_printoptions(profile="default")
         """
-        if self.device != positions.device:
-            name = self.__class__.__name__
-            raise RuntimeError(
-                f"All tensors of '{name}' must be on the same device!\n"
-                f"Use `{name}.param2019(device=device)` to correctly set it."
-            )
+        if solve_mode not in ("schur", "linear"):
+            raise ValueError(f"Unknown EEQ solve mode '{solve_mode}'!")
 
-        if self.dtype != positions.dtype:
-            name = self.__class__.__name__
-            raise RuntimeError(
-                f"All tensors of '{name}' must have the same dtype!\n"
-                f"Use `{name}.param2019(dtype=dtype)` to correctly set it."
-            )
+        self._check_structure(structure)
 
-        total_charge = torch.atleast_1d(total_charge)
+        numbers = structure.numbers
+        positions = structure.positions
+        total_charge = self._total_charge(structure)
 
-        # Attempt reshaping to proper batch shape: (n,) -> (n, 1)
-        if total_charge.ndim == 1:
-            if len(total_charge) != 1:
-                total_charge = total_charge.view(-1, 1)
-
-        if total_charge.ndim != numbers.ndim:
-            raise ValueError(
-                f"Total charge must have the same number of dimensions as "
-                f"the atomic numbers tensor. Got\n"
-                f"- atomic numbers: {numbers.shape}\n"
-                f"- total charge:   {total_charge.shape}"
-            )
-
-        eps = torch.tensor(torch.finfo(positions.dtype).eps, **self.dd)
-        zero = torch.tensor(0.0, **self.dd)
-        stop = torch.sqrt(torch.tensor(2.0 / math.pi, **self.dd))  # sqrt(2/pi)
+        eps = torch.finfo(positions.dtype).eps
+        stop = math.sqrt(2.0 / math.pi)
 
         real = real_atoms(numbers)
         mask = real_pairs(numbers, mask_diagonal=True)
+        diagonal = torch.eye(
+            numbers.shape[-1], dtype=torch.bool, device=numbers.device
+        )
 
         distances = torch.where(
             mask,
             storch.cdist(positions, positions, p=2),
             eps,
         )
-        diagonal = mask.new_zeros(mask.shape)
-        diagonal.diagonal(dim1=-2, dim2=-1).fill_(True)
 
         #############
         # Build RHS #
@@ -263,8 +254,8 @@ class EEQModel(ChargeModel):
 
         cc = torch.where(
             real,
-            -self.chi[numbers] + storch.sqrt(cn) * self.kcn[numbers],
-            zero,
+            -self.chi[numbers] + storch.safe_sqrt(cn) * self.kcn[numbers],
+            0.0,
         )
 
         ##################
@@ -274,14 +265,10 @@ class EEQModel(ChargeModel):
         # radii
         rad = self.rad[numbers]
         rads = rad.unsqueeze(-1) ** 2 + rad.unsqueeze(-2) ** 2
-        gamma = torch.where(mask, 1.0 / storch.sqrt(rads), zero)
+        gamma = torch.where(mask, 1.0 / storch.safe_sqrt(rads), 0.0)
 
-        # hardness
-        eta = torch.where(
-            real,
-            self.eta[numbers] + stop / rad,
-            torch.tensor(1.0, **self.dd),
-        )
+        # hardness (unity for padding atoms to keep the matrix regular)
+        eta = torch.where(real, self.eta[numbers] + stop / rad, 1.0)
 
         coulomb = torch.where(
             diagonal,
@@ -289,7 +276,7 @@ class EEQModel(ChargeModel):
             torch.where(
                 mask,
                 torch.erf(distances * gamma) / distances,
-                zero,
+                0.0,
             ),
         )
 
@@ -297,12 +284,8 @@ class EEQModel(ChargeModel):
         # Constraint #
         ##############
 
-        # Build 'ones' vector for the constraint
-        constraint = torch.where(
-            real,
-            torch.ones(numbers.shape, **self.dd),
-            torch.zeros(numbers.shape, **self.dd),
-        )
+        # 'ones' vector for the constraint (zero for padding atoms)
+        constraint = real.to(positions.dtype)
 
         #######################
         # Solve linear system #
@@ -313,12 +296,9 @@ class EEQModel(ChargeModel):
                 cc, constraint, coulomb, total_charge, return_energy
             )
 
-        if solve_mode == "linear":
-            return self._solve_linear(
-                cc, constraint, coulomb, total_charge, return_energy
-            )
-
-        raise ValueError(f"Unknown EEQ solve mode '{solve_mode}'!")
+        return self._solve_linear(
+            cc, constraint, coulomb, total_charge, return_energy
+        )
 
     def _solve_linear(
         self,
@@ -340,7 +320,7 @@ class EEQModel(ChargeModel):
         coulomb : Tensor
             Coulomb interaction matrix.
         total_charge : Tensor
-            Total charge of the system.
+            Total charge of the system, shape ``(..., 1)``.
         return_energy : bool
             Whether to return the electrostatic energy as well.
 
@@ -349,7 +329,7 @@ class EEQModel(ChargeModel):
         Tensor | (Tensor, Tensor)
             Partial charges or tuple of partial charges and energies.
         """
-        zeros = torch.zeros(cc.shape[:-1], **self.dd)
+        zeros = cc.new_zeros(cc.shape[:-1])
 
         rhs = torch.concat((cc, total_charge), dim=-1)
 
@@ -408,7 +388,7 @@ class EEQModel(ChargeModel):
         coulomb : Tensor
             Coulomb interaction matrix.
         total_charge : Tensor
-            Total charge of the system.
+            Total charge of the system, shape ``(..., 1)``.
         return_energy : bool
             Whether to return the electrostatic energy as well.
 
@@ -452,170 +432,96 @@ class EEQModel(ChargeModel):
 
 @overload
 def get_eeq(
-    numbers: Tensor,
-    positions: Tensor,
-    chrg: Tensor,
+    structure: Structure,
     *,
-    counting_function: CountingFunction = erf_count,
-    rcov: Tensor | None = None,
-    cutoff: Tensor | float | int | None = defaults.EEQ_CN_CUTOFF,
-    cn_max: Tensor | float | int | None = defaults.EEQ_CN_MAX,
-    kcn: Tensor | float | int = defaults.EEQ_KCN,
-    return_energy: Literal[False],
-    **kwargs: Any,
+    cn: CNModel = cn_eeq,
+    return_energy: Literal[False] = False,
+    solve_mode: SolveMode = "schur",
 ) -> Tensor: ...
 
 
 @overload
 def get_eeq(
-    numbers: Tensor,
-    positions: Tensor,
-    chrg: Tensor,
+    structure: Structure,
     *,
-    counting_function: CountingFunction = erf_count,
-    rcov: Tensor | None = None,
-    cutoff: Tensor | float | int | None = defaults.EEQ_CN_CUTOFF,
-    cn_max: Tensor | float | int | None = defaults.EEQ_CN_MAX,
-    kcn: Tensor | float | int = defaults.EEQ_KCN,
+    cn: CNModel = cn_eeq,
     return_energy: Literal[True],
-    **kwargs: Any,
+    solve_mode: SolveMode = "schur",
 ) -> tuple[Tensor, Tensor]: ...
 
 
 def get_eeq(
-    numbers: Tensor,
-    positions: Tensor,
-    chrg: Tensor,
+    structure: Structure,
     *,
-    counting_function: CountingFunction = erf_count,
-    rcov: Tensor | None = None,
-    cutoff: Tensor | float | int | None = defaults.EEQ_CN_CUTOFF,
-    cn_max: Tensor | float | int | None = defaults.EEQ_CN_MAX,
-    kcn: Tensor | float | int = defaults.EEQ_KCN,
+    cn: CNModel = cn_eeq,
     return_energy: bool = False,
-    solve_mode: Literal["schur", "linear"] = "schur",
-    **kwargs: Any,
+    solve_mode: SolveMode = "schur",
 ) -> Tensor | tuple[Tensor, Tensor]:
     """
-    Calculate atomic EEQ charges and energies.
+    Calculate atomic EEQ charges and energies with the standard (2019)
+    parametrization.
 
     Parameters
     ----------
-    numbers : Tensor
-        Atomic numbers for all atoms in the system of shape ``(..., nat)``.
-    positions : Tensor
-        Cartesian coordinates of all atoms (shape: ``(..., nat, 3)``).
-    chrg : Tensor
-        Total charge of system.
-    counting_function : CountingFunction
-        Calculate weight for pairs.
-        Defaults to :func:`tad_mctc.ncoord.erf_count`.
-    rcov : Tensor | None, optional
-        Covalent radii for each species. Defaults to ``None``.
-    cutoff : Tensor | float | int | None, optional
-        Real-space cutoff.
-        Defaults to :data:`tad_multicharge.defaults.CUTOFF_EEQ`.
-    cn_max : Tensor | float | int | None, optional
-        Maximum coordination number.
-        Defaults to :data:`tad_multicharge.defaults.CUTOFF_EEQ_MAX`.
-    kcn : Tensor | float | int, optional
-        Steepness of the counting function.
+    structure : Structure
+        The molecule(s) to evaluate. ``structure.charge`` is the total
+        charge; absent means neutral.
+    cn : CNModel, optional
+        Coordination number. Defaults to :data:`tad_mctc.ncoord.cn_eeq`;
+        another cutoff, for example, is ``cn_eeq.replace(cutoff=...)``.
     return_energy : bool, optional
         Return the EEQ energy as well. Defaults to ``False``.
-    solve_mode : Literal["schur", "linear"], optional
-        Choose the solution method for the linear system.
-        - ``"schur"``: Use Schur-complement based method with Cholesky
-          factorization (default, recommended).
-        - ``"linear"``: Solve the full bordered linear system directly.
-          Less stable and slower for large systems.
-        Defaults to ``"schur"``.
-    **kwargs : Any
-        Additional keyword arguments for EEQ CN calculation.
+    solve_mode : SolveMode, optional
+        Solution method for the linear system, see
+        :meth:`EEQModel.solve`. Defaults to ``"schur"``.
 
     Returns
     -------
-    (Tensor, Tensor)
-        Tuple of electrostatic energies and partial charges.
+    Tensor | (Tensor, Tensor)
+        Partial charges, or partial charges and atom-resolved energies if
+        ``return_energy=True``.
     """
-    eeq = EEQModel.param2019(device=positions.device, dtype=positions.dtype)
-    cn = coordination_number(
-        numbers,
-        positions,
-        counting_function=counting_function,
-        rcov=rcov,
-        cutoff=cutoff,
-        cn_max=cn_max,
-        kcn=kcn,
-        **kwargs,
-    )
-
-    return eeq.solve(
-        numbers,
-        positions,
-        chrg,
-        cn,
-        return_energy=return_energy,
-        solve_mode=solve_mode,
-    )
+    model = EEQModel.param2019(
+        device=structure.positions.device, dtype=structure.positions.dtype
+    ).replace(cn=cn)
+    return model(structure, return_energy=return_energy, solve_mode=solve_mode)
 
 
-def get_charges(
-    numbers: Tensor,
-    positions: Tensor,
-    chrg: Tensor,
-    cutoff: Tensor | None = None,
-) -> Tensor:
+def get_charges(structure: Structure, *, cn: CNModel = cn_eeq) -> Tensor:
     """
     Calculate atomic EEQ charges.
 
     Parameters
     ----------
-    numbers : Tensor
-        Atomic numbers for all atoms in the system of shape ``(..., nat)``.
-    positions : Tensor
-        Cartesian coordinates of all atoms (shape: ``(..., nat, 3)``).
-    chrg : Tensor
-        Total charge of system.
-    cutoff : Tensor | None, optional
-        Real-space cutoff. Defaults to ``None``.
+    structure : Structure
+        The molecule(s) to evaluate. ``structure.charge`` is the total
+        charge; absent means neutral.
+    cn : CNModel, optional
+        Coordination number. Defaults to :data:`tad_mctc.ncoord.cn_eeq`.
 
     Returns
     -------
     Tensor
-        Atomic charges.
+        Atomic charges, shape ``(..., nat)``.
     """
-    return get_eeq(numbers, positions, chrg, cutoff=cutoff, return_energy=False)
+    return get_eeq(structure, cn=cn, return_energy=False)
 
 
-def get_energy(
-    numbers: Tensor,
-    positions: Tensor,
-    chrg: Tensor,
-    cutoff: Tensor | None = None,
-) -> Tensor:
+def get_energy(structure: Structure, *, cn: CNModel = cn_eeq) -> Tensor:
     """
     Calculate atomic EEQ energies.
 
     Parameters
     ----------
-    numbers : Tensor
-        Atomic numbers for all atoms in the system of shape ``(..., nat)``.
-    positions : Tensor
-        Cartesian coordinates of all atoms (shape: ``(..., nat, 3)``).
-    chrg : Tensor
-        Total charge of system.
-    cutoff : Tensor | None, optional
-        Real-space cutoff. Defaults to ``None``.
+    structure : Structure
+        The molecule(s) to evaluate. ``structure.charge`` is the total
+        charge; absent means neutral.
+    cn : CNModel, optional
+        Coordination number. Defaults to :data:`tad_mctc.ncoord.cn_eeq`.
 
     Returns
     -------
     Tensor
-        Atomic energies.
+        Atom-resolved energies, shape ``(..., nat)``.
     """
-    return get_eeq(
-        numbers,
-        positions,
-        chrg,
-        cutoff=cutoff,
-        return_energy=True,
-    )[1]
+    return get_eeq(structure, cn=cn, return_energy=True)[1]

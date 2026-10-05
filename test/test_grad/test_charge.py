@@ -24,30 +24,26 @@ This module tests the EEQ charge model including:
  - ghost atoms
  - autograd via `gradcheck`
 
-Note that `torch.linalg.solve` gives slightly different results (around 1e-5
-to 1e-6) across different PyTorch versions (1.11.0 vs 1.13.0) for single
-precision. For double precision, however the results are identical.
+The coordination number is computed once and held fixed, so only the
+gradient through the linear solve is checked here.
 """
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 import torch
 from tad_mctc.autograd import dgradcheck, dgradgradcheck
-from tad_mctc.batch import pack
-from tad_mctc.data.molecules import mols as samples
 from tad_mctc.ncoord import cn_eeq
 from tad_mctc.typing import DD, Tensor
 
 from tad_multicharge.model import eeq
 
 from ..conftest import DEVICE, FAST_MODE
+from ..utils import load_batch, load_structure
 
 sample_list = ["NH3", "NH3-dimer", "PbH4-BiH3", "C6H5I-CH3SH"]
-
-device = None
 
 tol = 1e-7
 
@@ -58,20 +54,19 @@ def gradchecker(
     """Prepare gradient check from `torch.autograd`."""
     dd: DD = {"device": DEVICE, "dtype": dtype}
 
-    sample = samples[name]
-    numbers = sample["numbers"].to(DEVICE)
-    positions = sample["positions"].to(**dd)
+    structure = load_structure(name, dd)
     total_charge = torch.tensor(0.0, **dd)
 
     eeq_model = eeq.EEQModel.param2019(**dd)
+    cn = cn_eeq(structure)
 
     # variables to be differentiated
-    positions.requires_grad_(True)
+    positions = structure.positions.clone().requires_grad_(True)
     total_charge.requires_grad_(True)
 
     def func(pos: Tensor, tchrg: Tensor) -> Tensor:
-        cn = cn_eeq(numbers, positions)
-        return eeq_model.solve(numbers, pos, tchrg, cn)[0]
+        s = structure.replace(positions=pos, charge=tchrg)
+        return eeq_model.solve(s, cn)
 
     return func, (positions, total_charge)
 
@@ -106,30 +101,19 @@ def gradchecker_batch(
     """Prepare gradient check from `torch.autograd`."""
     dd: DD = {"device": DEVICE, "dtype": dtype}
 
-    sample1, sample2 = samples[name1], samples[name2]
-    numbers = pack(
-        [
-            sample1["numbers"].to(DEVICE),
-            sample2["numbers"].to(DEVICE),
-        ]
-    )
-    positions = pack(
-        [
-            sample1["positions"].to(**dd),
-            sample2["positions"].to(**dd),
-        ]
-    )
+    structure = load_batch([name1, name2], dd)
     total_charge = torch.tensor([0.0, 0.0], **dd)
 
     eeq_model = eeq.EEQModel.param2019(**dd)
+    cn = cn_eeq(structure)
 
     # variables to be differentiated
-    positions.requires_grad_(True)
+    positions = structure.positions.clone().requires_grad_(True)
     total_charge.requires_grad_(True)
 
     def func(pos: Tensor, tchrg: Tensor) -> Tensor:
-        cn = cn_eeq(numbers, positions)
-        return eeq_model.solve(numbers, pos, tchrg, cn)[0]
+        s = structure.replace(positions=pos, charge=tchrg)
+        return eeq_model.solve(s, cn)
 
     return func, (positions, total_charge)
 

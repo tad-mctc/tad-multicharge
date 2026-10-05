@@ -15,46 +15,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Testing the charges module
-==========================
-
-This module tests the EEQ charge model including:
- - single molecule
- - batched
- - ghost atoms
- - autograd via `gradcheck`
-
-Note that `torch.linalg.solve` gives slightly different results (around 1e-5
-to 1e-6) across different PyTorch versions (1.11.0 vs 1.13.0) for single
-precision. For double precision, however the results are identical.
+General tests of the charge model as a frozen `Node`: construction checks,
+conversion, immutability and the checks of `solve`.
 """
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 import torch
 from tad_mctc.convert import str_to_device
-from tad_mctc.typing import MockTensor
+from tad_mctc.io.structure import Structure
+from tad_mctc.ncoord import cn_eeq
+from tad_mctc.typing import DD
 
 from tad_multicharge.model import ChargeModel, eeq
+
+from ..conftest import DEVICE
+from ..utils import load_structure
+
+
+def _structure(dtype: torch.dtype = torch.double, **kwargs) -> Structure:  # type: ignore[no-untyped-def]
+    structure = load_structure("NH3", {"device": DEVICE, "dtype": dtype})
+    return structure.replace(**kwargs)
+
+
+def test_abstract() -> None:
+    t = torch.rand(5)
+    with pytest.raises(TypeError):
+        ChargeModel(chi=t, kcn=t, eta=t, rad=t, cn=cn_eeq)  # type: ignore[abstract]
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32, torch.float64])
 def test_change_type(dtype: torch.dtype) -> None:
-    model = eeq.EEQModel.param2019().type(dtype)
-    assert model.dtype == dtype
-
-
-def test_change_type_fail() -> None:
     model = eeq.EEQModel.param2019()
+    converted = model.type(dtype)
+    assert converted.dtype == dtype
+    assert converted.chi.dtype == converted.rad.dtype == dtype
 
-    # trying to use setter
-    with pytest.raises(AttributeError):
-        model.dtype = torch.float64
-
-    # passing disallowed dtype
-    with pytest.raises(ValueError):
-        model.type(torch.bool)
+    # conversion returns a new model; the CN model is carried over
+    assert model.dtype == torch.get_default_dtype()
+    assert converted.cn is model.cn
 
 
 @pytest.mark.cuda
@@ -65,20 +67,48 @@ def test_change_device(device_str: str) -> None:
     assert model.device == device
 
 
-def test_change_device_fail() -> None:
+def test_frozen() -> None:
     model = eeq.EEQModel.param2019()
 
-    # trying to use setter
     with pytest.raises(AttributeError):
-        model.device = torch.device("cpu")
+        model.dtype = torch.float64  # type: ignore[misc]
+
+    with pytest.raises(AttributeError):
+        model.device = torch.device("cpu")  # type: ignore[misc]
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        model.chi = torch.zeros(5)  # type: ignore[misc]
+
+
+def test_replace() -> None:
+    model = eeq.EEQModel.param2019(dtype=torch.double)
+    chi = model.chi * 2
+    cn = cn_eeq.replace(cutoff=10.0)
+
+    new = model.replace(chi=chi, cn=cn)
+    assert new.chi is chi and new.cn is cn
+    assert new.eta is model.eta
+    assert model.cn is cn_eeq
 
 
 def test_init_dtype_fail() -> None:
     t = torch.rand(5)
 
-    # all tensor must have the same type
-    with pytest.raises(RuntimeError):
-        eeq.EEQModel(t.type(torch.double), t, t, t)
+    # all floating-point tensors must have the same dtype
+    with pytest.raises(TypeError):
+        eeq.EEQModel(chi=t.double(), kcn=t, eta=t, rad=t)
+
+
+def test_init_not_floating_fail() -> None:
+    t = torch.rand(5)
+    with pytest.raises(TypeError, match="floating-point"):
+        eeq.EEQModel(chi=torch.ones(5, dtype=torch.long), kcn=t, eta=t, rad=t)
+
+
+def test_init_shape_fail() -> None:
+    t = torch.rand(5)
+    with pytest.raises(ValueError, match="one-dimensional"):
+        eeq.EEQModel(chi=torch.rand(5, 1), kcn=t, eta=t, rad=t)
 
 
 @pytest.mark.cuda
@@ -86,82 +116,68 @@ def test_init_device_fail() -> None:
     cpu_tensor = torch.rand(5, device=torch.device("cpu"))
     cuda_tensor = cpu_tensor.to("cuda")
 
-    # tensors on different devices without specifying target must fail
+    # tensors on different devices must fail
     with pytest.raises(RuntimeError):
-        eeq.EEQModel(cpu_tensor, cuda_tensor, cuda_tensor, cuda_tensor)
+        eeq.EEQModel(
+            chi=cpu_tensor,
+            kcn=cuda_tensor,
+            eta=cuda_tensor,
+            rad=cuda_tensor,
+        )
 
 
 def test_solve_dtype_fail() -> None:
-    t = torch.rand(5, dtype=torch.float64)
-    model = eeq.EEQModel.param2019()
+    model = eeq.EEQModel.param2019(device=DEVICE, dtype=torch.float32)
+    structure = _structure(torch.double)
 
-    # all tensor must have the same type
-    with pytest.raises(RuntimeError):
-        model.solve(t, t.type(torch.float16), t, t)
+    with pytest.raises(RuntimeError, match="same dtype"):
+        model.solve(structure, torch.ones(4, dtype=torch.double))
 
 
 @pytest.mark.cuda
 def test_solve_device_fail() -> None:
-    t = torch.rand(5)
-    t2 = t.clone()
-    model = eeq.EEQModel.param2019()
+    model = eeq.EEQModel.param2019(device=torch.device("cpu"))
+    structure = _structure(torch.get_default_dtype()).to(device="cuda")
 
-    if "cuda" in str(t.device):
-        t2 = t2.cpu()
-    elif "cpu" in str(t.device):
-        t2 = t2.cuda()
-
-    # all tensor must be on the same device
-    with pytest.raises(RuntimeError):
-        model.solve(t, t2, t, t)
+    with pytest.raises(RuntimeError, match="same device"):
+        model.solve(structure, torch.ones(4, device="cuda"))
 
 
-def test_model_device_different() -> None:
-    cuda_tensor = MockTensor([4, 5, 6])
-    cuda_tensor.device = torch.device("cuda")
+def test_solve_periodic_fail() -> None:
+    model = eeq.EEQModel.param2019(device=DEVICE, dtype=torch.double)
+    structure = _structure(
+        lattice=torch.eye(3, dtype=torch.double, device=DEVICE) * 10
+    )
 
-    cpu_tensor = MockTensor([1, 2, 3])
-    cpu_tensor.device = torch.device("cpu")
-    with pytest.raises(RuntimeError) as exc:
-        ChargeModel(cpu_tensor, cpu_tensor, cpu_tensor, cuda_tensor)
-
-    assert "All tensors must be on the same device!" in str(exc.value)
-
-
-def test_solve_device_different() -> None:
-    model = eeq.EEQModel.param2019()
-
-    cuda_tensor = MockTensor([4, 5, 6])
-    cuda_tensor.device = torch.device("cuda")
-
-    cpu_tensor = MockTensor([1, 2, 3])
-    cpu_tensor.device = torch.device("cpu")
-
-    # all tensor must be on the same device
-    with pytest.raises(RuntimeError) as exc:
-        model.solve(cpu_tensor, cuda_tensor, cpu_tensor, cpu_tensor)
-
-    assert "must be on the same device!" in str(exc.value)
-
-
-def test_solve_shape_fail() -> None:
-    numbers = torch.ones((1, 5), dtype=torch.long)
-    positions = torch.ones((1, 5, 3), dtype=torch.float64)
-
-    charge = torch.tensor([1.0], dtype=torch.float64)
-    model = eeq.EEQModel.param2019(dtype=torch.float64)
-
-    # Shape of charge must be (1, 5) too
-    with pytest.raises(ValueError):
-        model.solve(numbers, positions, charge, numbers)
+    with pytest.raises(NotImplementedError, match="periodic"):
+        model(structure)
 
 
 def test_solve_unknown_mode_fail() -> None:
-    numbers = torch.tensor([7, 1, 1, 1])
-    positions = torch.zeros((4, 3), dtype=torch.float64)
-    charge = torch.tensor(0.0, dtype=torch.float64)
-    cn = torch.tensor([3.0, 1.0, 1.0, 1.0])
-    model = eeq.EEQModel.param2019(dtype=torch.float64)
+    model = eeq.EEQModel.param2019(device=DEVICE, dtype=torch.double)
+    structure = _structure()
+    cn = torch.tensor([3.0, 1.0, 1.0, 1.0], dtype=torch.double, device=DEVICE)
 
     with pytest.raises(ValueError, match="Unknown EEQ solve mode"):
-        model.solve(numbers, positions, charge, cn, solve_mode="invalid")  # type: ignore[arg-type]
+        model.solve(structure, cn, solve_mode="invalid")  # type: ignore[call-overload]
+
+
+@pytest.mark.parametrize("charge", [0.0, [0.0], 1.0, [1.0]])
+def test_total_charge_shapes(charge: float | list[float]) -> None:
+    """A 0-d and a ``(1,)`` charge of an unbatched structure both work."""
+    dd: DD = {"device": DEVICE, "dtype": torch.double}
+    total = torch.tensor(charge, **dd)
+
+    q = eeq.EEQModel.param2019(**dd)(_structure(charge=total))
+    assert q.shape == (4,)
+    assert torch.allclose(q.sum(), total.sum(), atol=1e-12)
+
+
+def test_absent_charge_is_neutral() -> None:
+    dd: DD = {"device": DEVICE, "dtype": torch.double}
+    model = eeq.EEQModel.param2019(**dd)
+    structure = _structure()
+
+    q = model(structure)
+    q0 = model(structure.replace(charge=torch.tensor(0.0, **dd)))
+    assert torch.allclose(q, q0, atol=1e-12)
