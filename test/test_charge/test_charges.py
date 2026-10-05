@@ -24,10 +24,6 @@ The tests surrounding the EEQ charge model include:
  - ghost atoms
  - autograd via `gradcheck`
 
-Note that `torch.linalg.solve` gives slightly different results (around 1e-5
-to 1e-6) across different PyTorch versions (1.11.0 vs 1.13.0) for single
-precision. For double precision, however the results are identical.
-
 In PR #22, problems with double precision also appeared and tests failed for
 a few matrix elements on Linux and Windows (notably not on macOS). Locally,
 all tests were passing.
@@ -48,6 +44,7 @@ from tad_mctc.typing import DD
 from tad_multicharge.model import eeq
 
 from ..conftest import DEVICE
+from ..utils import load_batch, load_structure
 from .samples import samples
 
 
@@ -60,9 +57,8 @@ def test_single(
     tol = 1e-4 if dtype == torch.float32 else 1e-6
 
     sample = samples["NH3-dimer"]
-    numbers = sample["numbers"].to(DEVICE)
-    positions = sample["positions"].to(**dd)
     total_charge = sample["total_charge"].to(**dd)
+    structure = load_structure("NH3-dimer", dd, total_charge)
 
     qref = sample["q"].to(**dd)
     eref = sample["energy"].to(**dd)
@@ -70,12 +66,7 @@ def test_single(
     cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], **dd)
     eeq_model = eeq.EEQModel.param2019(**dd)
     qat, energy = eeq_model.solve(
-        numbers,
-        positions,
-        total_charge,
-        cn,
-        return_energy=True,
-        solve_mode=solve_mode,
+        structure, cn, return_energy=True, solve_mode=solve_mode
     )
     tot = torch.sum(qat, -1)
 
@@ -92,18 +83,20 @@ def test_single_with_cn(dtype: torch.dtype, name: str) -> None:
     tol = 1e-4 if dtype == torch.float32 else 1e-6
 
     sample = samples[name]
-    numbers = sample["numbers"].to(DEVICE)
-    positions = sample["positions"].to(**dd)
     total_charge = sample["total_charge"].to(**dd)
+    structure = load_structure(name, dd, total_charge)
 
     qref = sample["q"].to(**dd)
     eref = sample["energy"].to(**dd)
 
-    cn = cn_eeq(numbers, positions)
+    cn = cn_eeq(structure)
     eeq_model = eeq.EEQModel.param2019(**dd)
-    qat, energy = eeq_model.solve(
-        numbers, positions, total_charge, cn, return_energy=True
-    )
+    qat, energy = eeq_model.solve(structure, cn, return_energy=True)
+
+    # `__call__` computes the same CN itself
+    qat2, energy2 = eeq_model(structure, return_energy=True)
+    assert torch.equal(qat, qat2)
+    assert torch.equal(energy, energy2)
     tot = torch.sum(qat, -1)
 
     assert qat.dtype == energy.dtype == dtype
@@ -118,10 +111,11 @@ def test_ghost(dtype: torch.dtype) -> None:
     tol = 1e-4 if dtype == torch.float32 else 1e-6
 
     sample = samples["NH3-dimer"]
-    numbers = sample["numbers"].clone().to(DEVICE)
-    numbers[[1, 5, 6, 7]] = 0
-    positions = sample["positions"].to(**dd)
     total_charge = sample["total_charge"].to(**dd)
+    structure = load_structure("NH3-dimer", dd, total_charge)
+    numbers = structure.numbers.clone()
+    numbers[[1, 5, 6, 7]] = 0
+    structure = structure.replace(numbers=numbers)
     cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], **dd)
 
     qref = torch.tensor(
@@ -152,9 +146,7 @@ def test_ghost(dtype: torch.dtype) -> None:
     )
 
     eeq_model = eeq.EEQModel.param2019(**dd)
-    qat, energy = eeq_model.solve(
-        numbers, positions, total_charge, cn, return_energy=True
-    )
+    qat, energy = eeq_model.solve(structure, cn, return_energy=True)
     tot = torch.sum(qat, -1)
 
     assert qat.dtype == energy.dtype == dtype
@@ -175,19 +167,8 @@ def test_batch(
         samples["PbH4-BiH3"],
         samples["C6H5I-CH3SH"],
     )
-    numbers = pack(
-        (
-            sample1["numbers"].to(DEVICE),
-            sample2["numbers"].to(DEVICE),
-        )
-    )
-    positions = pack(
-        (
-            sample1["positions"].to(**dd),
-            sample2["positions"].to(**dd),
-        )
-    )
     total_charge = torch.tensor([0.0, 0.0], **dd).view(-1, 1)
+    structure = load_batch(["PbH4-BiH3", "C6H5I-CH3SH"], dd, [0.0, 0.0])
     eref = pack(
         (
             sample1["energy"].to(**dd),
@@ -248,12 +229,7 @@ def test_batch(
     )
     eeq_model = eeq.EEQModel.param2019(**dd)
     qat, energy = eeq_model.solve(
-        numbers,
-        positions,
-        total_charge,
-        cn,
-        return_energy=True,
-        solve_mode=solve_mode,
+        structure, cn, return_energy=True, solve_mode=solve_mode
     )
     tot = torch.sum(qat, -1).view(-1, 1)
 
@@ -270,20 +246,13 @@ def test_linear_no_energy(dtype: torch.dtype) -> None:
     tol = 1e-4 if dtype == torch.float32 else 1e-6
 
     sample = samples["NH3-dimer"]
-    numbers = sample["numbers"].to(DEVICE)
-    positions = sample["positions"].to(**dd)
-    total_charge = sample["total_charge"].to(**dd)
+    structure = load_structure("NH3-dimer", dd, sample["total_charge"])
     qref = sample["q"].to(**dd)
 
     cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], **dd)
     eeq_model = eeq.EEQModel.param2019(**dd)
     qat = eeq_model.solve(
-        numbers,
-        positions,
-        total_charge,
-        cn,
-        return_energy=False,
-        solve_mode="linear",
+        structure, cn, return_energy=False, solve_mode="linear"
     )
     assert isinstance(qat, torch.Tensor)
     assert qat.dtype == dtype

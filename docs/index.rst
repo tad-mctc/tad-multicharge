@@ -1,8 +1,8 @@
 Torch Autodiff Multicharge
 ==========================
 
-.. image:: https://img.shields.io/badge/python-%3E=3.8-blue.svg
-    :target: https://img.shields.io/badge/python-3.8%20|%203.9%20|%203.10%20|%203.11%20|%203.12|%203.13|%203.14-blue.svg
+.. image:: https://img.shields.io/badge/python-%3E=3.10-blue.svg
+    :target: https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12|%203.13|%203.14-blue.svg
     :alt: Python Versions
 
 .. image:: https://img.shields.io/github/v/release/tad-mctc/tad-multicharge
@@ -75,6 +75,7 @@ The following example shows how to calculate the EEQ partial charges and the cor
 .. code:: python
 
     import torch
+    from tad_mctc.io.structure import Structure
     from tad_multicharge import eeq
 
     numbers = torch.tensor([7, 7, 1, 1, 1, 1, 1, 1])
@@ -93,13 +94,12 @@ The following example shows how to calculate the EEQ partial charges and the cor
         ]
     )
 
-    total_charge = torch.tensor(0.0)
+    # an absent `charge` means neutral
+    structure = Structure(numbers=numbers, positions=positions)
     cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 
     eeq_model = eeq.EEQModel.param2019()
-    qat, energy = eeq_model.solve(
-        numbers, positions, total_charge, cn, return_energy=True
-    )
+    qat, energy = eeq_model.solve(structure, cn, return_energy=True)
 
     print(torch.sum(energy, -1))
     # tensor(-0.1750)
@@ -111,9 +111,10 @@ The next example shows the calculation of the electrostatic energy with a simple
 .. code:: python
 
     import torch
-    from tad_multicharge import eeq
     from tad_mctc.batch import pack
     from tad_mctc.convert import symbol_to_number
+    from tad_mctc.io.structure import Structure
+    from tad_multicharge import eeq
 
     # S22 system 4: formamide dimer
     numbers = pack(
@@ -155,17 +156,18 @@ The next example shows the calculation of the electrostatic energy with a simple
         )
     )
 
-    # total charge of both system
+    # total charge of both systems
     charge = torch.tensor([0.0, 0.0])
+    structure = Structure(numbers=numbers, positions=positions, charge=charge)
 
     # calculate electrostatic energy in Hartree
-    energy = torch.sum(eeq.get_energy(numbers, positions, charge), -1)
+    energy = torch.sum(eeq.get_energy(structure), -1)
 
-    torch.set_printoptions(precision=10)
+    torch.set_printoptions(precision=4)
     print(energy)
-    # tensor([-0.2086764276, -0.0972093940])
+    # tensor([-0.2087, -0.0972])
     print(energy[0] - 2 * energy[1])
-    # tensor(-0.0142576396)
+    # tensor(-0.0143)
 
 
 .. toctree::

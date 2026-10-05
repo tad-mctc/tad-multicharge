@@ -23,8 +23,7 @@ from __future__ import annotations
 from typing import TypedDict
 
 import torch
-from tad_mctc.data.molecules import merge_nested_dicts, mols
-from tad_mctc.typing import Molecule, Tensor
+from tad_mctc.typing import Tensor
 
 
 class Refs(TypedDict):
@@ -37,11 +36,7 @@ class Refs(TypedDict):
     """Nuclear gradient (reference with TPSS0 parameters)."""
 
 
-class Record(Molecule, Refs):
-    """Store for molecular information and reference values."""
-
-
-refs: dict[str, Refs] = {
+samples: dict[str, Refs] = {
     "LiH": Refs(
         {
             "charge": torch.tensor(0.0, dtype=torch.double),
@@ -1271,6 +1266,3 @@ refs: dict[str, Refs] = {
         }
     ),
 }
-
-
-samples: dict[str, Record] = merge_nested_dicts(mols, refs)

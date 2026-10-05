@@ -20,7 +20,8 @@ Torch Autodiff Multicharge
 
 Implementation of charge models in PyTorch.
 This module allows to process a single structure or a batch of structures for
-the calculation of atom-resolved dispersion energies.
+the calculation of atomic partial charges and atom-resolved electrostatic
+energies.
 
 .. note::
 
@@ -66,20 +67,19 @@ Example
 ...     ]),
 ... ))
 >>>
->>> # total charge of both systems
->>> charge = torch.tensor([0.0, 0.0])
+>>> # neutral systems (absent `charge`), both in one batched structure
+>>> structure = mctc.Structure(numbers=numbers, positions=positions)
 >>>
 >>> # calculate electrostatic energy in Hartree
->>> energy = torch.sum(eeq.get_energy(numbers, positions, charge), -1)
+>>> energy = torch.sum(mc.eeq.get_energy(structure), -1)
 >>>
->>> torch.set_printoptions(precision=10)
+>>> torch.set_printoptions(precision=4)
 >>> print(energy)
-tensor([-0.2086764276, -0.0972093940])
+tensor([-0.2087, -0.0972])
 >>> print(energy[0] - 2 * energy[1])
-tensor(-0.0142576396)
+tensor(-0.0143)
+>>> torch.set_printoptions(profile="default")
 """
-
-import torch
 
 from . import model, param
 from .__version__ import __version__

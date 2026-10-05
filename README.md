@@ -4,8 +4,8 @@
   <tr>
     <td>Compatibility:</td>
     <td>
-      <img src="https://img.shields.io/badge/Python-3.8%20|%203.9%20|%203.10%20|%203.11%20|%203.12|%203.13|%203.14-blue.svg" alt="Python Versions"/>
-      <img src="https://img.shields.io/badge/PyTorch-%3E=1.11.0-blue.svg" alt="PyTorch Versions"/>
+      <img src="https://img.shields.io/badge/Python-3.10%20|%203.11%20|%203.12|%203.13%20|%203.14%20-blue.svg" alt="Python Versions"/>
+      <img src="https://img.shields.io/badge/PyTorch-%3E=2.6.0-blue.svg" alt="PyTorch Versions"/>
     </td>
   </tr>
   <tr>
@@ -128,36 +128,22 @@ The following dependencies are required
 
 ## Compatibility
 
-| PyTorch \ Python | 3.8                | 3.9                | 3.10               | 3.11               | 3.12               | 3.13               | 3.14               |
-| ---------------- | ------------------ | ------------------ | ------------------ | ------------------ | ------------------ | ------------------ | ------------------ |
-| 1.11.0           | :heavy_check_mark: | :heavy_check_mark: | :x:                | :x:                | :x:                | :x:                | :x:                |
-| 1.12.1           | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x:                | :x:                | :x:                | :x:                |
-| 1.13.1           | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :x:                | :x:                | :x:                |
-| 2.0.1            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                | :x:                | :x:                |
-| 2.1.2            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                | :x:                | :x:                |
-| 2.2.2            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                | :x:                |
-| 2.3.1            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                | :x:                |
-| 2.4.1            | :white_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                | :x:                |
-| 2.5.1            | :x:                | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                | :x:                |
-| 2.6.0            | :x:                | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                |
-| 2.7.1            | :x:                | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                |
-| 2.8.0            | :x:                | :white_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                |
-| 2.9.1            | :x:                | :x:                | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: |
-| 2.10.0           | :x:                | :x:                | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: |
-| 2.11.0           | :x:                | :x:                | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: |
-| 2.12.1           | :x:                | :x:                | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: |
-| 2.13.0           | :x:                | :x:                | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: |
-| 2.14.0           | :x:                | :x:                | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| PyTorch \ Python | 3.10               | 3.11               | 3.12               | 3.13               | 3.14               |
+| ---------------- | ------------------ | ------------------ | ------------------ | ------------------ | ------------------ |
+| 2.6.0            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                |
+| 2.7.1            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                |
+| 2.8.0            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                |
+| 2.9.1            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: |
+| 2.10.0           | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: |
+| 2.11.0           | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: |
+| 2.12.1           | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: |
+| 2.13.0           | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: |
+| 2.14.0           | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
 
 :white_check_mark: tested in CI &nbsp;&nbsp; :heavy_check_mark: supported, but not tested in CI (should still work) &nbsp;&nbsp; :x: not supported
 
 Note that only the latest bug fix version is listed, but all preceding bug fix minor versions are supported.
-For example, although only version 2.2.2 is listed, version 2.2.0 and 2.2.1 are also supported.
-
-On macOS and Windows, PyTorch<2.0.0 does only support Python<3.11.
-
-PyTorch<2.3.0 is compiled against the NumPy 1.x C-API and requires `numpy<2`.
-Since this cannot be expressed in the package metadata (dependency markers cannot refer to the PyTorch version), pin `numpy<2` yourself if you use PyTorch<2.3.0.
+For example, although only version 2.7.1 is listed, version 2.7.0 is also supported.
 
 
 ## Development
@@ -199,6 +185,7 @@ The following example shows how to calculate the EEQ partial charges and the cor
 
 ```python
 import torch
+from tad_mctc.io.structure import Structure
 from tad_multicharge import eeq
 
 numbers = torch.tensor([7, 7, 1, 1, 1, 1, 1, 1])
@@ -217,13 +204,12 @@ positions = torch.tensor(
     ]
 )
 
-total_charge = torch.tensor(0.0)
+# an absent `charge` means neutral
+structure = Structure(numbers=numbers, positions=positions)
 cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 
 eeq_model = eeq.EEQModel.param2019()
-qat, energy = eeq_model.solve(
-    numbers, positions, total_charge, cn, return_energy=True
-)
+qat, energy = eeq_model.solve(structure, cn, return_energy=True)
 
 print(torch.sum(energy, -1))
 # tensor(-0.1750)
@@ -232,12 +218,14 @@ print(qat)
 ```
 
 The next example shows the calculation of the electrostatic energy with a simpler API for a batch of structures.
+The coordination number is computed internally with `tad_mctc.ncoord.cn_eeq`.
 
 ```python
 import torch
-from tad_multicharge import eeq
 from tad_mctc.batch import pack
 from tad_mctc.convert import symbol_to_number
+from tad_mctc.io.structure import Structure
+from tad_multicharge import eeq
 
 # S22 system 4: formamide dimer
 numbers = pack(
@@ -279,17 +267,35 @@ positions = pack(
     )
 )
 
-# total charge of both system
+# total charge of both systems
 charge = torch.tensor([0.0, 0.0])
+structure = Structure(numbers=numbers, positions=positions, charge=charge)
 
 # calculate electrostatic energy in Hartree
-energy = torch.sum(eeq.get_energy(numbers, positions, charge), -1)
+energy = torch.sum(eeq.get_energy(structure), -1)
 
-torch.set_printoptions(precision=10)
+torch.set_printoptions(precision=4)
 print(energy)
-# tensor([-0.2086764276, -0.0972093940])
+# tensor([-0.2087, -0.0972])
 print(energy[0] - 2 * energy[1])
-# tensor(-0.0142576396)
+# tensor(-0.0143)
+```
+
+The model is a frozen [`Node`](https://github.com/tad-mctc/tad-mctc) (a pytree), so it works with `torch.func.vmap`, `jacrev`, `jacfwd` and `torch.compile(fullgraph=True)`.
+For example, the derivative of the energy with respect to all parameters is a single `jacrev` over the model, and a different coordination number is set with `replace`.
+
+```python
+import torch
+from tad_mctc.ncoord import cn_eeq
+from tad_multicharge import eeq
+
+model = eeq.EEQModel.param2019().replace(cn=cn_eeq.replace(cutoff=20.0))
+
+grad = torch.func.jacrev(
+    lambda m: m(structure, return_energy=True)[1].sum()
+)(model)
+print(grad.chi.shape)
+# torch.Size([104])
 ```
 
 ## Contributing

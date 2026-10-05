@@ -20,18 +20,18 @@ Testing charge gradient (autodiff).
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 import torch
-from tad_mctc.autograd import dgradcheck, dgradgradcheck, jacrev
-from tad_mctc.batch import pack
-from tad_mctc.convert import reshape_fortran, tensor_to_numpy
+from tad_mctc.autograd import dgradcheck, dgradgradcheck, numgrad
+from tad_mctc.convert import reshape_fortran
 from tad_mctc.typing import DD, Tensor
 
 from tad_multicharge.model import eeq
 
 from ..conftest import DEVICE, FAST_MODE
+from ..utils import load_batch, load_structure
 from .samples_dqdr import samples
 
 sample_list = [
@@ -55,15 +55,11 @@ def gradchecker(dtype: torch.dtype, name: str) -> tuple[
 ]:
     dd: DD = {"device": DEVICE, "dtype": dtype}
 
-    sample = samples[name]
-    numbers = sample["numbers"].to(DEVICE)
-    positions = sample["positions"].to(**dd)
-    charge = torch.tensor(0.0, **dd)
-
-    positions.requires_grad_(True)
+    structure = load_structure(name, dd, 0.0)
+    positions = structure.positions.clone().requires_grad_(True)
 
     def func(pos: Tensor) -> Tensor:
-        return eeq.get_charges(numbers, pos, charge)
+        return eeq.get_charges(structure.replace(positions=pos))
 
     return func, positions
 
@@ -98,26 +94,13 @@ def gradchecker_batch(dtype: torch.dtype, name1: str, name2: str) -> tuple[
 ]:
     dd: DD = {"device": DEVICE, "dtype": dtype}
 
-    sample1, sample2 = samples[name1], samples[name2]
-    numbers = pack(
-        [
-            sample1["numbers"].to(DEVICE),
-            sample2["numbers"].to(DEVICE),
-        ]
-    )
-    positions = pack(
-        [
-            sample1["positions"].to(**dd),
-            sample2["positions"].to(**dd),
-        ]
-    )
-    charge = torch.tensor([0.0, 0.0], **dd)
+    structure = load_batch([name1, name2], dd, [0.0, 0.0])
 
     # variable to be differentiated
-    positions.requires_grad_(True)
+    positions = structure.positions.clone().requires_grad_(True)
 
     def func(pos: Tensor) -> Tensor:
-        return eeq.get_charges(numbers, pos, charge)
+        return eeq.get_charges(structure.replace(positions=pos))
 
     return func, positions
 
@@ -156,54 +139,24 @@ def test_gradgradcheck_batch(
 def test_jacobian(dtype: torch.dtype, name: str) -> None:
     """Compare with reference values from tblite."""
     dd: DD = {"device": DEVICE, "dtype": dtype}
-
-    sample = samples[name]
-    numbers = sample["numbers"].to(DEVICE)
-    positions = sample["positions"].to(**dd)
-
-    if name == "ZnOOH-":
-        charge = torch.tensor(-1.0, **dd)
-    elif name == "Ag2Cl22-":
-        charge = torch.tensor(-2.0, **dd)
-    else:
-        charge = torch.tensor(0.0, **dd)
+    charge = {"ZnOOH-": -1.0, "Ag2Cl22-": -2.0}.get(name, 0.0)
+    structure = load_structure(name, dd, charge)
+    nat = structure.numbers.shape[-1]
 
     # (3*nat*nat) -> (3, nat, nat) -> (nat, nat, 3)
-    ref = sample["grad"].to(**dd)
-    ref = reshape_fortran(ref, torch.Size((3, *2 * (numbers.shape[-1],))))
+    ref = samples[name]["grad"].to(**dd)
+    ref = reshape_fortran(ref, torch.Size((3, nat, nat)))
     ref = torch.einsum("xij->jix", ref)
 
-    numgrad = calc_numgrad(numbers, positions, charge)
+    num = numgrad(eeq.get_charges, structure)
 
-    # variable to be differentiated
-    positions.requires_grad_(True)
+    def f(pos: Tensor) -> Tensor:
+        return eeq.get_charges(structure.replace(positions=pos))
 
-    fjac = jacrev(eeq.get_charges, argnums=1)
-    jacobian: Tensor = fjac(numbers, positions, charge)  # type: ignore
-
-    positions.detach_()
-    jac_np = tensor_to_numpy(jacobian)
+    jacobian = torch.func.jacrev(f)(structure.positions)
 
     # 1 / 768 element in MB16_43_01 is slightly off
-    assert pytest.approx(ref.cpu(), abs=tol * 10.5) == jac_np
+    assert pytest.approx(ref.cpu(), abs=tol * 10.5) == jacobian.cpu()
 
-    assert pytest.approx(ref.cpu(), abs=tol * 10) == numgrad.cpu()
-    assert pytest.approx(numgrad.cpu(), abs=tol * 10) == jac_np
-
-
-def calc_numgrad(numbers: Tensor, positions: Tensor, charge: Tensor) -> Tensor:
-    gradient = torch.zeros(torch.Size((*2 * (numbers.shape[-1],), 3)))
-    step = 1.0e-6
-
-    for i in range(numbers.shape[-1]):
-        for j in range(3):
-            positions[i, j] += step
-            qr = eeq.get_charges(numbers, positions, charge)
-
-            positions[i, j] -= 2 * step
-            ql = eeq.get_charges(numbers, positions, charge)
-
-            positions[i, j] += step
-            gradient[:, i, j] = 0.5 * (qr - ql) / step
-
-    return gradient
+    assert pytest.approx(ref.cpu(), abs=tol * 10) == num.cpu()
+    assert pytest.approx(num.cpu(), abs=tol * 10) == jacobian.cpu()

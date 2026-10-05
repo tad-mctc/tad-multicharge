@@ -55,12 +55,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
     parser.addoption(
-        "--jit",
-        action="store_true",
-        help="Enable JIT during tests (default = False).",
-    )
-
-    parser.addoption(
         "--fast",
         action="store_true",
         help="Use `fast_mode` for gradient checks (default = True).",
@@ -114,11 +108,6 @@ def pytest_configure(config: pytest.Config) -> None:
     if config.getoption("--detect-anomaly"):
         torch.autograd.anomaly_mode.set_detect_anomaly(True)
 
-    if config.getoption("--jit"):
-        torch.jit._state.enable()  # type: ignore # pylint: disable=protected-access
-    else:
-        torch.jit._state.disable()  # type: ignore # pylint: disable=protected-access
-
     if config.getoption("--fast"):
         FAST_MODE = True
     if config.getoption("--slow"):
@@ -143,12 +132,7 @@ def pytest_configure(config: pytest.Config) -> None:
         DEVICE = torch.device("cuda:0")
         torch.use_deterministic_algorithms(False)
 
-        # `torch.set_default_tensor_type` is deprecated since 2.1.0 and version
-        # 2.0.0 introduces `torch.set_default_device`
-        if torch.__version__ < (2, 0, 0):  # type: ignore
-            torch.set_default_tensor_type("torch.cuda.FloatTensor")  # type: ignore
-        else:
-            torch.set_default_device(DEVICE)  # type: ignore[attr-defined]
+        torch.set_default_device(DEVICE)
     else:
         torch.use_deterministic_algorithms(True)
         DEVICE = None
