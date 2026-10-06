@@ -28,33 +28,24 @@ from __future__ import annotations
 import pytest
 import torch
 from tad_mctc.io.structure import Structure
+from tad_mctc.tools.compile import compile_fullgraph
+from tad_mctc.tools.testing import requires_compile
 from tad_mctc.typing import DD, Tensor
 from torch.func import jacrev
 
 from tad_multicharge.model import SolveMode, eeq
 
 from ..conftest import DEVICE
-from ..utils import (
-    DYNAMO_SUPPORTED,
-    DYNAMO_UNSUPPORTED_REASON,
-    compile_fullgraph,
-    load_batch,
-    load_structure,
-)
+from ..utils import load_samples, load_structure
 
 DD_DOUBLE: DD = {"device": DEVICE, "dtype": torch.double}
 
-pytestmark = pytest.mark.skipif(
-    not DYNAMO_SUPPORTED, reason=DYNAMO_UNSUPPORTED_REASON
-)
+pytestmark = [requires_compile, pytest.mark.usefixtures("reset_dynamo")]
 
 
 @pytest.fixture(name="structure")
 def fixture_structure(request: pytest.FixtureRequest) -> Structure:
-    names = request.param
-    if len(names) == 1:
-        return load_structure(names[0], DD_DOUBLE, 0.0)
-    return load_batch(names, DD_DOUBLE, [0.0] * len(names))
+    return load_samples(request.param, DD_DOUBLE, 0.0)
 
 
 @pytest.mark.parametrize(
@@ -80,7 +71,6 @@ def test_construction_inside_compile(
     assert structure.charge is not None
     args = (structure.positions, structure.charge)
 
-    torch._dynamo.reset()  # pylint: disable=protected-access
     q, e = compile_fullgraph(f)(*args)
     qref, eref = f(*args)
 
@@ -97,7 +87,6 @@ def test_compile_jacrev() -> None:
         s = structure.replace(positions=positions)
         return model(s, return_energy=True)[1].sum()
 
-    torch._dynamo.reset()  # pylint: disable=protected-access
     forces = compile_fullgraph(jacrev(energy))(structure.positions)
     ref = jacrev(energy)(structure.positions)
 
@@ -109,10 +98,11 @@ def test_nodes_as_arguments_no_recompile() -> None:
     The model and the structure are pytrees: other values of the same
     shapes reuse the compiled graph.
 
-    The model is called through ``solve``: calling it as ``model(...)``
-    gives the same values, but Dynamo in torch 2.6 and 2.7 guards a called
-    object that is a graph input on its identity, so every new model
-    object recompiles there (not in 2.8 and later).
+    Calling the model as ``model(...)`` gives the same values, but Dynamo
+    in torch 2.6 and 2.7 guards a called object that is a graph input on
+    its identity, so every new model object recompiles there. The single
+    graph is therefore checked through ``solve`` on all versions, and
+    through ``model(...)`` only from torch 2.8 on.
     """
     from torch._dynamo.testing import CompileCounter
 
@@ -129,14 +119,18 @@ def test_nodes_as_arguments_no_recompile() -> None:
     m2 = model.replace(chi=model.chi * 1.1)
     cases = ((model, s1), (m2, s1), (model, s2))
 
-    torch._dynamo.reset()  # pylint: disable=protected-access
     counter = CompileCounter()
     compiled = torch.compile(f, backend=counter, fullgraph=True)
     for m, s in cases:
         assert torch.allclose(compiled(m, s), g(m, s), atol=1e-10, rtol=0)
     assert counter.frame_count == 1
 
+    # clear the cache so `g` compiles fresh and is counted on its own
     torch._dynamo.reset()  # pylint: disable=protected-access
-    compiled = torch.compile(g, backend="eager", fullgraph=True)
+    counter = CompileCounter()
+    compiled = torch.compile(g, backend=counter, fullgraph=True)
     for m, s in cases:
         assert torch.allclose(compiled(m, s), g(m, s), atol=1e-10, rtol=0)
+    # unlike `__tversion__`, this orders 2.8.0 pre-releases before 2.8.0
+    if torch.torch_version.TorchVersion(torch.__version__) >= "2.8.0":
+        assert counter.frame_count == 1

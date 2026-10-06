@@ -73,12 +73,10 @@ Example
 >>> # calculate electrostatic energy in Hartree
 >>> energy = torch.sum(mc.eeq.get_energy(structure), -1)
 >>>
->>> torch.set_printoptions(precision=4)
 >>> print(energy)
 tensor([-0.2087, -0.0972])
 >>> print(energy[0] - 2 * energy[1])
 tensor(-0.0143)
->>> torch.set_printoptions(profile="default")
 """
 
 from . import model, param
