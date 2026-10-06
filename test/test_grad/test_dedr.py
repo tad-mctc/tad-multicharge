@@ -20,21 +20,26 @@ Testing energy gradient (autodiff).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import pytest
 import torch
-from tad_mctc.autograd import dgradcheck, dgradgradcheck, numgrad
+from tad_mctc.autograd import (
+    dgradcheck,
+    dgradgradcheck,
+    numgrad,
+    positions_gradchecker,
+)
 from tad_mctc.io.structure import Structure
 from tad_mctc.typing import DD, Tensor
 
 from tad_multicharge.model import eeq
 
 from ..conftest import DEVICE, FAST_MODE
-from ..utils import load_batch, load_structure
+from ..utils import CHECK_IDS, load_samples, load_structure, single_and_paired
 from .samples_dedr import samples
 
-sample_list = [
+SAMPLE_LIST = [
     "LiH",
     "SiH4",
     "AmF3",
@@ -44,93 +49,36 @@ sample_list = [
     "Ag2Cl22-",
     "ZnOOH-",
 ]
-sample_list_large = ["vancoh2"]
+SAMPLE_LIST_LARGE = ["vancoh2"]
 
-tol = 1e-8
+TOL = 1e-8
 
 
-def gradchecker(dtype: torch.dtype, name: str) -> tuple[
-    Callable[[Tensor], Tensor],  # autograd function
-    Tensor,  # differentiable variables
-]:
+def gradchecker(
+    dtype: torch.dtype, names: Sequence[str]
+) -> tuple[Callable[[Tensor], Tensor], Tensor]:
+    """Prepare a gradient check of `eeq.get_energy` w.r.t. positions."""
     dd: DD = {"device": DEVICE, "dtype": dtype}
-
-    structure = load_structure(name, dd, 0.0)
-    positions = structure.positions.clone().requires_grad_(True)
-
-    def func(pos: Tensor) -> Tensor:
-        return eeq.get_energy(structure.replace(positions=pos))
-
-    return func, positions
+    return positions_gradchecker(eeq.get_energy, load_samples(names, dd, 0.0))
 
 
 @pytest.mark.grad
+@pytest.mark.parametrize("check", [dgradcheck, dgradgradcheck], ids=CHECK_IDS)
 @pytest.mark.parametrize("dtype", [torch.double])
-@pytest.mark.parametrize("name", sample_list + sample_list_large)
-def test_gradcheck(dtype: torch.dtype, name: str) -> None:
-    """
-    Check a single analytical gradient of parameters against numerical
-    gradient from `torch.autograd.gradcheck`.
-    """
-    func, diffvars = gradchecker(dtype, name)
-    assert dgradcheck(func, diffvars, atol=tol, fast_mode=FAST_MODE)
-
-
-@pytest.mark.grad
-@pytest.mark.parametrize("dtype", [torch.double])
-@pytest.mark.parametrize("name", sample_list + sample_list_large)
-def test_gradgradcheck(dtype: torch.dtype, name: str) -> None:
-    """
-    Check a single analytical gradient of parameters against numerical
-    gradient from `torch.autograd.gradgradcheck`.
-    """
-    func, diffvars = gradchecker(dtype, name)
-    assert dgradgradcheck(func, diffvars, atol=tol, fast_mode=FAST_MODE)
-
-
-def gradchecker_batch(dtype: torch.dtype, name1: str, name2: str) -> tuple[
-    Callable[[Tensor], Tensor],  # autograd function
-    Tensor,  # differentiable variables
-]:
-    dd: DD = {"device": DEVICE, "dtype": dtype}
-
-    structure = load_batch([name1, name2], dd, [0.0, 0.0])
-
-    # variable to be differentiated
-    positions = structure.positions.clone().requires_grad_(True)
-
-    def func(pos: Tensor) -> Tensor:
-        return eeq.get_energy(structure.replace(positions=pos))
-
-    return func, positions
-
-
-@pytest.mark.grad
-@pytest.mark.parametrize("dtype", [torch.double])
-@pytest.mark.parametrize("name1", ["LiH"])
-@pytest.mark.parametrize("name2", sample_list + sample_list_large)
-def test_gradcheck_batch(dtype: torch.dtype, name1: str, name2: str) -> None:
-    """
-    Check a single analytical gradient of parameters against numerical
-    gradient from `torch.autograd.gradcheck`.
-    """
-    func, diffvars = gradchecker_batch(dtype, name1, name2)
-    assert dgradcheck(func, diffvars, atol=tol, fast_mode=FAST_MODE)
-
-
-@pytest.mark.grad
-@pytest.mark.parametrize("dtype", [torch.double])
-@pytest.mark.parametrize("name1", ["LiH"])
-@pytest.mark.parametrize("name2", sample_list + sample_list_large)
-def test_gradgradcheck_batch(
-    dtype: torch.dtype, name1: str, name2: str
+@pytest.mark.parametrize(
+    "names",
+    single_and_paired(SAMPLE_LIST + SAMPLE_LIST_LARGE, "LiH"),
+    ids="+".join,
+)
+def test_gradcheck(
+    check: Callable[..., bool], dtype: torch.dtype, names: list[str]
 ) -> None:
     """
-    Check a single analytical gradient of parameters against numerical
-    gradient from `torch.autograd.gradgradcheck`.
+    Check the analytical first (`gradcheck`) and second (`gradgradcheck`)
+    derivatives w.r.t. positions against numerical ones.
     """
-    func, diffvars = gradchecker_batch(dtype, name1, name2)
-    assert dgradgradcheck(func, diffvars, atol=tol, fast_mode=FAST_MODE)
+    func, diffvars = gradchecker(dtype, names)
+    assert check(func, diffvars, atol=TOL, fast_mode=FAST_MODE)
 
 
 def _structure(name: str, dd: DD) -> Structure:
@@ -153,7 +101,7 @@ def run_jacobian(dtype: torch.dtype, name: str, atol: float) -> None:
 
 @pytest.mark.grad
 @pytest.mark.parametrize("dtype", [torch.double])
-@pytest.mark.parametrize("name", sample_list)
+@pytest.mark.parametrize("name", SAMPLE_LIST)
 def test_jacobian(dtype: torch.dtype, name: str) -> None:
     run_jacobian(dtype, name, 1e-7)
 
@@ -161,6 +109,6 @@ def test_jacobian(dtype: torch.dtype, name: str) -> None:
 @pytest.mark.grad
 @pytest.mark.large
 @pytest.mark.parametrize("dtype", [torch.double])
-@pytest.mark.parametrize("name", sample_list_large)
+@pytest.mark.parametrize("name", SAMPLE_LIST_LARGE)
 def test_jacobian_large(dtype: torch.dtype, name: str) -> None:
     run_jacobian(dtype, name, 1e-6)

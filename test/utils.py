@@ -20,25 +20,19 @@ Utility functions for testing.
 
 from __future__ import annotations
 
-import shutil
-import sys
-from collections.abc import Callable, Sequence
-from typing import Any
+from collections.abc import Sequence
 
-import torch
 from tad_mctc.data.structures import get_structure
 from tad_mctc.io.structure import Structure, pack_structures
-from tad_mctc.tools.compile import is_compile_supported
 from tad_mctc.typing import DD, Tensor
 
 __all__ = [
-    "COMPILE_BACKEND",
-    "DYNAMO_SUPPORTED",
-    "DYNAMO_UNSUPPORTED_REASON",
+    "CHECK_IDS",
     "SOURCES",
-    "compile_fullgraph",
     "load_batch",
+    "load_samples",
     "load_structure",
+    "single_and_paired",
 ]
 
 
@@ -73,17 +67,15 @@ def load_structure(
     dd : DD
         Device and dtype.
     charge : Tensor | float | None, optional
-        Total charge. ``None`` (default) means neutral.
+        Total charge. ``None`` (default) keeps the record's charge; no
+        record in :data:`SOURCES` stores one, so this means neutral.
 
     Returns
     -------
     Structure
         The unbatched structure.
     """
-    structure = get_structure(*SOURCES[name], **dd)
-    if charge is None:
-        return structure
-    return structure.replace(charge=torch.as_tensor(charge, **dd))
+    return get_structure(*SOURCES[name], charge=charge, **dd)
 
 
 def load_batch(
@@ -102,30 +94,25 @@ def load_batch(
     )
 
 
-DYNAMO_SUPPORTED = is_compile_supported()
-"""Whether ``torch.compile`` is supported on this Python/PyTorch
-combination."""
-
-DYNAMO_UNSUPPORTED_REASON = (
-    "torch.compile/Dynamo is not supported on this Python/PyTorch combination"
-)
-
-
-def _has_cxx_compiler() -> bool:
-    """Whether the C++ compiler that TorchInductor calls is on ``PATH``."""
-    names = ["cl"] if sys.platform == "win32" else ["c++", "g++", "clang++"]
-    return any(shutil.which(name) is not None for name in names)
+def load_samples(
+    names: Sequence[str], dd: DD, charge: Tensor | float | None = None
+) -> Structure:
+    """
+    Load one sample unbatched (:func:`load_structure`) or several as one
+    batch (:func:`load_batch`), all with the same total ``charge``.
+    """
+    if len(names) == 1:
+        return load_structure(names[0], dd, charge)
+    return load_batch(names, dd, [charge] * len(names))
 
 
-COMPILE_BACKEND = "inductor" if _has_cxx_compiler() else "aot_eager"
-"""The ``torch.compile`` backend for tests. ``fullgraph=True`` is decided by
-Dynamo before any backend runs, so ``"aot_eager"`` still checks that a
-function traces as one graph, just without generating C++ code."""
+CHECK_IDS = ["grad", "gradgrad"]
+"""Test ids for parametrizing over ``[dgradcheck, dgradgradcheck]``."""
 
 
-def compile_fullgraph(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """``torch.compile(fn)`` as one graph with static shapes on
-    :data:`COMPILE_BACKEND`."""
-    return torch.compile(
-        fn, fullgraph=True, dynamic=False, backend=COMPILE_BACKEND
-    )
+def single_and_paired(names: Sequence[str], first: str) -> list[list[str]]:
+    """
+    Sample lists for :func:`load_samples`: each name alone, then each name
+    batched after ``first``.
+    """
+    return [[name] for name in names] + [[first, name] for name in names]

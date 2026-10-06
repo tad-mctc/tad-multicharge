@@ -41,12 +41,10 @@ Example
 >>> cn = torch.tensor([3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
 >>> eeq_model = eeq.EEQModel.param2019()
 >>> qat, energy = eeq_model.solve(structure, cn, return_energy=True)
->>> torch.set_printoptions(precision=4)
 >>> print(torch.sum(energy, -1))
 tensor(-0.1750)
 >>> print(qat)
 tensor([-0.8347, -0.8347,  0.2731,  0.2886,  0.2731,  0.2731,  0.2886,  0.2731])
->>> torch.set_printoptions(profile="default")
 """
 
 from __future__ import annotations
@@ -217,12 +215,10 @@ class EEQModel(ChargeModel):
         >>> _, e = eeq_model.solve(structure, cn, return_energy=True)
         >>> energy = torch.sum(e, -1)
         >>> energy.backward()
-        >>> torch.set_printoptions(precision=4)
         >>> print(positions.grad[:, 2])
         tensor([-0.0481,  0.0160,  0.0160,  0.0160])
         >>> print(total_charge.grad)
         tensor(1.2625)
-        >>> torch.set_printoptions(profile="default")
         """
         if solve_mode not in ("schur", "linear"):
             raise ValueError(f"Unknown EEQ solve mode '{solve_mode}'!")

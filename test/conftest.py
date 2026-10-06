@@ -23,6 +23,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 import torch
+from tad_mctc.tools.testing import fixture_reset_dynamo  # noqa: F401
 
 # avoid randomness and non-deterministic algorithms
 np.random.seed(0)

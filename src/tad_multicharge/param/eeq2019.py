@@ -54,7 +54,8 @@ chi = torch.tensor(
         *[+1.07206461, +1.09821942, +1.10900303, +1.01039812, +1.00095966],
         *[+1.11003303, +1.16831853, +1.00887482, +1.05928842, +1.07672363],
         *[+1.11308426, +1.14340090, +1.13714110],
-    ]
+    ],
+    dtype=torch.float64,
 )
 """Element-specific electronegativity for the EEQ charges."""
 
@@ -82,7 +83,8 @@ eta = torch.tensor(
         *[-0.00133327, -0.00104386, -0.00094936, -0.00111390, -0.00125257],
         *[-0.00095936, -0.00102814, -0.00104450, -0.00112666, -0.00101529],
         *[-0.00059592, -0.00012585, -0.00140896],
-    ]
+    ],
+    dtype=torch.float64,
 )
 """Element-specific chemical hardnesses for the EEQ charges."""
 
@@ -110,8 +112,10 @@ kcn = torch.tensor(
         *[+0.00369763, +0.00417543, +0.00706682, +0.00488679, +0.00505103],
         *[+0.00710682, +0.00463050, +0.00387799, +0.00296795, +0.00400648],
         *[+0.00548481, +0.01350400, +0.00675380],
-    ]
+    ],
+    dtype=torch.float64,
 )
+"""Element-specific CN scaling constant for the EEQ charges."""
 
 rad = torch.tensor(
     [
@@ -137,6 +141,7 @@ rad = torch.tensor(
         *[+1.44431317, +1.29032833, +1.41009404, +1.25501213, +1.15181468],
         *[+1.42010424, +1.43955530, +1.28565237, +1.35017463, +1.33011749],
         *[+1.30745135, +1.26526071, +1.34071499],
-    ]
+    ],
+    dtype=torch.float64,
 )
-"""Element-specific CN scaling constant for the EEQ charges."""
+"""Element-specific atomic radii (charge widths) for the EEQ charges."""

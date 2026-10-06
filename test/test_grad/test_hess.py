@@ -36,8 +36,8 @@ from ..conftest import DEVICE
 from ..utils import load_batch, load_structure
 from .samples_dedr import samples
 
-sample_list = ["LiH", "SiH4", "AmF3", "Ag2Cl22-", "ZnOOH-"]
-sample_list_large = ["PbH4-BiH3", "MB16_43_01"]
+SAMPLE_LIST = ["LiH", "SiH4", "AmF3", "Ag2Cl22-", "ZnOOH-"]
+SAMPLE_LIST_LARGE = ["PbH4-BiH3", "MB16_43_01"]
 
 
 def _energy_fn(structure: Structure):  # type: ignore[no-untyped-def]
@@ -73,21 +73,21 @@ def single(dtype: torch.dtype, name: str) -> None:
 
 
 @pytest.mark.parametrize("dtype", [torch.double])
-@pytest.mark.parametrize("name", sample_list)
+@pytest.mark.parametrize("name", SAMPLE_LIST)
 def test_single(dtype: torch.dtype, name: str) -> None:
     single(dtype, name)
 
 
 @pytest.mark.large
 @pytest.mark.parametrize("dtype", [torch.double])
-@pytest.mark.parametrize("name", sample_list_large)
+@pytest.mark.parametrize("name", SAMPLE_LIST_LARGE)
 def test_single_large(dtype: torch.dtype, name: str) -> None:
     single(dtype, name)
 
 
 @pytest.mark.parametrize("dtype", [torch.double])
 @pytest.mark.parametrize("name1", ["LiH"])
-@pytest.mark.parametrize("name2", sample_list)
+@pytest.mark.parametrize("name2", SAMPLE_LIST)
 def test_batch(dtype: torch.dtype, name1: str, name2: str) -> None:
     """`vmap` of the Hessian over a stacked (padded) batch of structures
     equals the Hessian of each padded system on its own."""
