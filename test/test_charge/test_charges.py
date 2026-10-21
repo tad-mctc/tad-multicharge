@@ -49,9 +49,9 @@ from .samples import samples
 
 
 @pytest.mark.parametrize("dtype", [torch.float, torch.double])
-@pytest.mark.parametrize("solve_mode", ["linear", "schur"])
+@pytest.mark.parametrize("solve_mode", ["linear", "schur", "cg"])
 def test_single(
-    dtype: torch.dtype, solve_mode: Literal["schur", "linear"]
+    dtype: torch.dtype, solve_mode: Literal["schur", "linear", "cg"]
 ) -> None:
     dd: DD = {"device": DEVICE, "dtype": dtype}
     tol = 1e-4 if dtype == torch.float32 else 1e-6
@@ -156,9 +156,9 @@ def test_ghost(dtype: torch.dtype) -> None:
 
 
 @pytest.mark.parametrize("dtype", [torch.float, torch.double])
-@pytest.mark.parametrize("solve_mode", ["linear", "schur"])
+@pytest.mark.parametrize("solve_mode", ["linear", "schur", "cg"])
 def test_batch(
-    dtype: torch.dtype, solve_mode: Literal["linear", "schur"]
+    dtype: torch.dtype, solve_mode: Literal["linear", "schur", "cg"]
 ) -> None:
     dd: DD = {"device": DEVICE, "dtype": dtype}
     tol = 1e-4 if dtype == torch.float32 else 1e-6

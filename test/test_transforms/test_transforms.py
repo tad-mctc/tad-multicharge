@@ -49,7 +49,7 @@ from ..utils import load_batch, load_structure
 
 DD_DOUBLE: DD = {"device": DEVICE, "dtype": torch.double}
 
-SOLVE_MODES = ["schur", "linear"]
+SOLVE_MODES = ["schur", "linear", "cg"]
 
 
 def _single() -> Structure:

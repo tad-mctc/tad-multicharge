@@ -40,7 +40,7 @@ from tad_mctc.typing import DD, Tensor
 __all__ = ["SOLVE_MODES", "SOURCES", "load", "samples"]
 
 
-SOLVE_MODES = ["schur", "linear"]
+SOLVE_MODES = ["schur", "linear", "cg"]
 
 SOURCES: dict[str, tuple[str, str]] = {
     "CO2": ("x23", "CO2"),
