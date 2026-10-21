@@ -22,5 +22,5 @@ channels:
 dependencies:
   - numpy
   - python>=3.10
-  - pytorch>=2.6.0,<3
-  - tad-mctc==0.9.1
+  - pytorch>=2.7.0,<3
+  - tad-mctc==0.11.0

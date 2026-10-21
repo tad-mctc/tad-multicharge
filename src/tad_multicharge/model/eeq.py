@@ -54,14 +54,17 @@ from typing import Literal, overload
 
 import torch
 from tad_mctc import storch
+from tad_mctc.autograd import is_functorch_tensor
 from tad_mctc.batch import real_atoms, real_pairs
 from tad_mctc.io.structure import Structure
 from tad_mctc.ncoord import cn_eeq
 from tad_mctc.ncoord.common import CNModel
+from tad_mctc.tools import is_compiling
 from tad_mctc.tree import child
 from tad_mctc.typing import DD, Tensor, get_default_dtype
 
 from ..param import eeq2019
+from ._ewald import coulomb_matrix_3d
 from .base import ChargeModel, SolveMode
 
 __all__ = ["EEQModel", "get_charges", "get_eeq", "get_energy"]
@@ -77,6 +80,28 @@ class EEQModel(ChargeModel):
 
     The coordination number defaults to :data:`tad_mctc.ncoord.cn_eeq`. A
     different one is set with ``model.replace(cn=cn_eeq.replace(cutoff=...))``.
+
+    A structure with a lattice, periodic along all three lattice vectors,
+    is evaluated with an Ewald summation, ported from multicharge: the
+    lattice sums are truncated at two cells around the nearest images of
+    each pair (weighted as in mctc-lib's Wigner-Seitz cell), with an Ewald
+    parameter adapted to the lattice. The positions are wrapped into the
+    cell first. A charged cell has a neutralising background. multicharge
+    0.5.0 centres some sums on the wrong image, which changes its charges
+    by up to about ``5e-7``.
+
+    Example
+    -------
+    >>> import torch
+    >>> from tad_mctc.data.structures import get_structure
+    >>> from tad_multicharge import eeq
+    >>> structure = get_structure("x23", "CO2", dtype=torch.double)
+    >>> eeq_model = eeq.EEQModel.param2019(dtype=torch.double)
+    >>> qat, energy = eeq_model(structure, return_energy=True)
+    >>> print(qat[[0, 4]])
+    tensor([ 0.4563, -0.2281], dtype=torch.float64)
+    >>> print(energy.sum())
+    tensor(-0.1245, dtype=torch.float64)
     """
 
     # A factory, not `default=cn_eeq`: `torch.compile` cannot trace a `Node`
@@ -187,7 +212,8 @@ class EEQModel(ChargeModel):
         Raises
         ------
         NotImplementedError
-            The structure is periodic.
+            The structure is periodic along one or two lattice vectors
+            only (1D or 2D).
         RuntimeError
             The structure is on a different device or has a different dtype
             than the model.
@@ -229,20 +255,7 @@ class EEQModel(ChargeModel):
         positions = structure.positions
         total_charge = self._total_charge(structure)
 
-        eps = torch.finfo(positions.dtype).eps
-        stop = math.sqrt(2.0 / math.pi)
-
         real = real_atoms(numbers)
-        mask = real_pairs(numbers, mask_diagonal=True)
-        diagonal = torch.eye(
-            numbers.shape[-1], dtype=torch.bool, device=numbers.device
-        )
-
-        distances = torch.where(
-            mask,
-            storch.cdist(positions, positions, p=2),
-            eps,
-        )
 
         #############
         # Build RHS #
@@ -258,23 +271,31 @@ class EEQModel(ChargeModel):
         # Build A matrix #
         ##################
 
-        # radii
-        rad = self.rad[numbers]
-        rads = rad.unsqueeze(-1) ** 2 + rad.unsqueeze(-2) ** 2
-        gamma = torch.where(mask, 1.0 / storch.safe_sqrt(rads), 0.0)
+        rad, eta = self.rad[numbers], self.eta[numbers]
 
-        # hardness (unity for padding atoms to keep the matrix regular)
-        eta = torch.where(real, self.eta[numbers] + stop / rad, 1.0)
+        if structure.lattice is None:
+            coulomb = _coulomb_matrix_0d(numbers, positions, rad, eta)
+        else:
+            # `Structure` fills in a mask whenever it has a lattice.
+            periodic = structure.periodic
+            assert periodic is not None
 
-        coulomb = torch.where(
-            diagonal,
-            eta.unsqueeze(-1),
-            torch.where(
-                mask,
-                torch.erf(distances * gamma) / distances,
-                0.0,
-            ),
-        )
+            # Reads the values of the mask, so it is skipped under `vmap`,
+            # `jacrev` and `torch.compile`.
+            if (
+                not is_functorch_tensor(periodic)
+                and not is_compiling()
+                and not bool(periodic.all())
+            ):
+                raise NotImplementedError(
+                    f"'{type(self).__name__}' supports molecules and "
+                    "structures periodic along all three lattice vectors "
+                    "(3D), but not 1D or 2D periodic structures."
+                )
+
+            coulomb = coulomb_matrix_3d(
+                numbers, positions, structure.lattice, periodic, rad, eta
+            )
 
         ##############
         # Constraint #
@@ -424,6 +445,62 @@ class EEQModel(ChargeModel):
         e = q * (0.5 * torch.einsum("...ij,...j->...i", coulomb, q) - cc)
 
         return q, e
+
+
+def _coulomb_matrix_0d(
+    numbers: Tensor, positions: Tensor, rad: Tensor, eta: Tensor
+) -> Tensor:
+    """
+    Coulomb matrix of the EEQ model for a molecule.
+
+    Parameters
+    ----------
+    numbers : Tensor
+        Atomic numbers, shape ``(..., nat)``. ``0`` marks padding.
+    positions : Tensor
+        Cartesian coordinates, shape ``(..., nat, 3)``.
+    rad : Tensor
+        Charge widths of the atoms, shape ``(..., nat)``.
+    eta : Tensor
+        Chemical hardnesses of the atoms, shape ``(..., nat)``.
+
+    Returns
+    -------
+    Tensor
+        Coulomb matrix, shape ``(..., nat, nat)``. Padding atoms have a
+        unit diagonal and no interactions.
+    """
+    eps = torch.finfo(positions.dtype).eps
+    stop = math.sqrt(2.0 / math.pi)
+
+    real = real_atoms(numbers)
+    mask = real_pairs(numbers, mask_diagonal=True)
+    diagonal = torch.eye(
+        numbers.shape[-1], dtype=torch.bool, device=numbers.device
+    )
+
+    distances = torch.where(
+        mask,
+        storch.cdist(positions, positions, p=2),
+        eps,
+    )
+
+    # radii
+    rads = rad.unsqueeze(-1) ** 2 + rad.unsqueeze(-2) ** 2
+    gamma = torch.where(mask, 1.0 / storch.safe_sqrt(rads), 0.0)
+
+    # hardness (unity for padding atoms to keep the matrix regular)
+    eta = torch.where(real, eta + stop / rad, 1.0)
+
+    return torch.where(
+        diagonal,
+        eta.unsqueeze(-1),
+        torch.where(
+            mask,
+            torch.erf(distances * gamma) / distances,
+            0.0,
+        ),
+    )
 
 
 @overload
