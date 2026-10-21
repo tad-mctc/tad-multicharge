@@ -5,7 +5,7 @@
     <td>Compatibility:</td>
     <td>
       <img src="https://img.shields.io/badge/Python-3.10%20|%203.11%20|%203.12|%203.13%20|%203.14%20-blue.svg" alt="Python Versions"/>
-      <img src="https://img.shields.io/badge/PyTorch-%3E=2.6.0-blue.svg" alt="PyTorch Versions"/>
+      <img src="https://img.shields.io/badge/PyTorch-%3E=2.7.0-blue.svg" alt="PyTorch Versions"/>
     </td>
   </tr>
   <tr>
@@ -130,7 +130,6 @@ The following dependencies are required
 
 | PyTorch \ Python | 3.10               | 3.11               | 3.12               | 3.13               | 3.14               |
 | ---------------- | ------------------ | ------------------ | ------------------ | ------------------ | ------------------ |
-| 2.6.0            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                |
 | 2.7.1            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                |
 | 2.8.0            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: | :x:                |
 | 2.9.1            | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :white_check_mark: |
@@ -280,6 +279,33 @@ print(energy[0] - 2 * energy[1])
 # tensor(-0.0143)
 ```
 
+Periodic structures (periodic along all three lattice vectors) are handled by the same call: a `Structure` with a `lattice` is evaluated with an Ewald summation, as in [multicharge](https://github.com/grimme-lab/multicharge).
+The derivatives with respect to the lattice vectors give the virial.
+
+```python
+import torch
+from tad_mctc.data.structures import get_structure
+from tad_multicharge import eeq
+
+# CO2 crystal of the X23 set, positions and lattice vectors (as rows) in Bohr
+structure = get_structure("x23", "CO2", dtype=torch.double)
+
+positions = structure.positions.clone().requires_grad_(True)
+lattice = structure.lattice.clone().requires_grad_(True)
+structure = structure.replace(positions=positions, lattice=lattice)
+
+model = eeq.EEQModel.param2019(dtype=torch.double)
+qat, energy = model(structure, return_energy=True)
+
+print(energy.sum())
+# tensor(-0.1245, dtype=torch.float64, grad_fn=<SumBackward0>)
+
+energy.sum().backward()
+virial = positions.mT @ positions.grad + lattice.mT @ lattice.grad
+print(virial.diagonal())
+# tensor([0.0378, 0.0378, 0.0378], dtype=torch.float64, grad_fn=<DiagonalBackward0>)
+```
+
 The model is a frozen [`Node`](https://github.com/tad-mctc/tad-mctc) (a pytree), so it works with `torch.func.vmap`, `jacrev`, `jacfwd` and `torch.compile(fullgraph=True)`.
 For example, the derivative of the energy with respect to all parameters is a single `jacrev` over the model, and a different coordination number is set with `replace`.
 
@@ -296,6 +322,8 @@ grad = torch.func.jacrev(
 print(grad.chi.shape)
 # torch.Size([104])
 ```
+
+For a periodic structure under these transforms, the coordination number needs its periodic image shifts built ahead of time, which are passed to the model call: `model(structure, build_periodic_shifts(lattice, periodic, cn_eeq.cutoff))` (see `tad_mctc.neighbor.build_periodic_shifts`).
 
 ## Contributing
 

@@ -143,13 +143,20 @@ def test_solve_device_fail() -> None:
         model.solve(structure, torch.ones(4, device="cuda"))
 
 
-def test_solve_periodic_fail() -> None:
+@pytest.mark.parametrize(
+    "periodic",
+    [[True, True, False], [True, False, False], [False, False, False]],
+    ids=["2d", "1d", "0d"],
+)
+def test_solve_partially_periodic_fail(periodic: list[bool]) -> None:
+    """Only 3D periodic structures have an Ewald sum."""
     model = eeq.EEQModel.param2019(device=DEVICE, dtype=torch.double)
     structure = _structure(
-        lattice=torch.eye(3, dtype=torch.double, device=DEVICE) * 10
+        lattice=torch.eye(3, dtype=torch.double, device=DEVICE) * 10,
+        periodic=torch.tensor(periodic, device=DEVICE),
     )
 
-    with pytest.raises(NotImplementedError, match="periodic"):
+    with pytest.raises(NotImplementedError, match="1D or 2D periodic"):
         model(structure)
 
 

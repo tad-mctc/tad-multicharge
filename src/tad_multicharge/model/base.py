@@ -35,6 +35,7 @@ from typing import Literal, overload
 
 from tad_mctc.io.structure import Structure
 from tad_mctc.ncoord.common import CNModel
+from tad_mctc.neighbor import NeighborList, PeriodicShifts
 from tad_mctc.tree import Node, child
 from tad_mctc.typing import Tensor
 
@@ -102,10 +103,6 @@ class ChargeModel(Node, ABC):
         metadata, so it is safe under ``vmap`` and ``torch.compile``.
         """
         name = type(self).__name__
-        if structure.lattice is not None:
-            raise NotImplementedError(
-                f"'{name}' does not support periodic structures."
-            )
 
         if self.device != structure.positions.device:
             raise RuntimeError(
@@ -136,6 +133,7 @@ class ChargeModel(Node, ABC):
     def __call__(
         self,
         structure: Structure,
+        pairs: PeriodicShifts | NeighborList | None = ...,
         *,
         return_energy: Literal[False] = ...,
         solve_mode: SolveMode = ...,
@@ -145,6 +143,7 @@ class ChargeModel(Node, ABC):
     def __call__(
         self,
         structure: Structure,
+        pairs: PeriodicShifts | NeighborList | None = ...,
         *,
         return_energy: Literal[True],
         solve_mode: SolveMode = ...,
@@ -154,6 +153,7 @@ class ChargeModel(Node, ABC):
     def __call__(
         self,
         structure: Structure,
+        pairs: PeriodicShifts | NeighborList | None = ...,
         *,
         return_energy: bool,
         solve_mode: SolveMode = ...,
@@ -162,6 +162,7 @@ class ChargeModel(Node, ABC):
     def __call__(
         self,
         structure: Structure,
+        pairs: PeriodicShifts | NeighborList | None = None,
         *,
         return_energy: bool = False,
         solve_mode: SolveMode = "schur",
@@ -173,7 +174,14 @@ class ChargeModel(Node, ABC):
         Parameters
         ----------
         structure : Structure
-            The molecule(s) to evaluate.
+            The molecule(s) or periodic structure(s) to evaluate.
+        pairs : PeriodicShifts | NeighborList | None, optional
+            How the coordination number enumerates the pairs, see
+            :meth:`tad_mctc.ncoord.common.CNModel.__call__`. Defaults to
+            ``None``, all pairs. A periodic structure under ``vmap``,
+            ``jacrev`` over the lattice or ``torch.compile`` needs shifts
+            built ahead of time with
+            :func:`~tad_mctc.neighbor.images.build_periodic_shifts`.
         return_energy : bool, optional
             Return the atom-resolved energy as well. Defaults to ``False``.
         solve_mode : SolveMode, optional
@@ -187,7 +195,7 @@ class ChargeModel(Node, ABC):
         """
         return self.solve(
             structure,
-            self.cn(structure),
+            self.cn(structure, pairs),
             return_energy=return_energy,
             solve_mode=solve_mode,
         )
