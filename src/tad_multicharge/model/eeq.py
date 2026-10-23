@@ -490,19 +490,13 @@ class EEQModel(ChargeModel):
         # Both right-hand sides as a batch dimension: (..., 2, nat)
         B = torch.stack((cc, constraint), dim=-2)
 
-        # In single precision, the recomputed residual can lie above the
-        # recursive one that stopped the iteration, and fail a target of a
-        # few epsilons (tad-mctc's floor is 10). Charges are then still
-        # accurate to about 1e-5.
-        eps = torch.finfo(B.dtype).eps
-
         result = storch.linsolve.implicit_solve(
             _coulomb_matvec,
             B,
             coulomb,
             method="cg",
             preconditioner=_jacobi,
-            rtol=max(CG_RTOL, 30 * eps),
+            rtol=CG_RTOL,
             atol=CG_ATOL,
         )
         X = storch.linsolve.require_convergence(result, name="EEQ CG solve")
@@ -515,8 +509,8 @@ class EEQModel(ChargeModel):
 
 
 CG_RTOL = 1e-12
-"""Relative tolerance of the CG solves of ``solve_mode="cg"``, raised to
-30 machine epsilons for single precision."""
+"""Relative tolerance of the CG solves of ``solve_mode="cg"`` (raised by
+tad-mctc to 10 machine epsilons for single precision)."""
 
 CG_ATOL = 1e-14
 """Absolute tolerance of the CG solves of ``solve_mode="cg"``."""
