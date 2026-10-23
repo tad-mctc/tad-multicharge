@@ -200,6 +200,10 @@ class EEQModel(ChargeModel):
               factorization (default, recommended).
             - ``"linear"``: Solve the full bordered linear system directly.
               Less stable and slower for large systems.
+            - ``"cg"``: Schur-complement method with the two SPD solves done
+              by Jacobi-preconditioned conjugate gradient, with implicit
+              derivatives (see :meth:`_solve_cg`). Can be faster for large
+              systems; slower for small ones.
 
             Defaults to ``"schur"``.
 
@@ -219,6 +223,9 @@ class EEQModel(ChargeModel):
             than the model.
         ValueError
             ``solve_mode`` is unknown.
+        ConvergenceError
+            ``solve_mode="cg"`` did not converge (outside of ``vmap`` and
+            ``torch.compile``, where the charges are NaN instead).
 
         Example
         -------
@@ -246,7 +253,7 @@ class EEQModel(ChargeModel):
         >>> print(total_charge.grad)
         tensor(1.2625)
         """
-        if solve_mode not in ("schur", "linear"):
+        if solve_mode not in ("schur", "linear", "cg"):
             raise ValueError(f"Unknown EEQ solve mode '{solve_mode}'!")
 
         self._check_structure(structure)
@@ -310,6 +317,11 @@ class EEQModel(ChargeModel):
 
         if solve_mode == "schur":
             return self._solve_schur(
+                cc, constraint, coulomb, total_charge, return_energy
+            )
+
+        if solve_mode == "cg":
+            return self._solve_cg(
                 cc, constraint, coulomb, total_charge, return_energy
             )
 
@@ -428,23 +440,122 @@ class EEQModel(ChargeModel):
         z = X[..., :, 0]  # A^{-1} b, (..., nat)
         y = X[..., :, 1]  # A^{-1} C, (..., nat)
 
-        # m = (C^T z - Q) / (C^T y) ; shape (..., 1)
-        num = (constraint * z).sum(dim=-1, keepdim=True) - total_charge
-        den = (constraint * y).sum(dim=-1, keepdim=True)
-        m = num / den
+        return _schur_charges(
+            z, y, cc, constraint, coulomb, total_charge, return_energy
+        )
 
-        # q = z - y * m (broadcast m over the `nat` dimension)
-        q = z - y * m  # (..., nat)
+    def _solve_cg(
+        self,
+        cc: Tensor,
+        constraint: Tensor,
+        coulomb: Tensor,
+        total_charge: Tensor,
+        return_energy: bool,
+    ) -> Tensor | tuple[Tensor, Tensor]:
+        """
+        Solve the EEQ linear system via the Schur-complement method, with
+        the two solves of the SPD Coulomb matrix done by Jacobi-preconditioned
+        conjugate gradient (see :meth:`_solve_schur`).
 
-        # Do not compute energy unless specifically requested
-        if return_energy is False:
-            return q
+        The derivatives of the charges are the implicit derivatives of the
+        linear system (:func:`tad_mctc.storch.linsolve.implicit_solve`), so
+        they are independent of the CG iterations. The matrix is still
+        built densely: one CG iteration costs :math:`O(N^2)`.
 
-        # E_scalar = 0.5 * x^T @ A @ x - b @ x^T
-        # E_vector =  x * (0.5 * A @ x - b)
-        e = q * (0.5 * torch.einsum("...ij,...j->...i", coulomb, q) - cc)
+        Parameters
+        ----------
+        cc : Tensor
+            Right-hand side vector.
+        constraint : Tensor
+            Constraint vector (ones for real atoms, zeros else).
+        coulomb : Tensor
+            Coulomb interaction matrix.
+        total_charge : Tensor
+            Total charge of the system, shape ``(..., 1)``.
+        return_energy : bool
+            Whether to return the electrostatic energy as well.
 
-        return q, e
+        Returns
+        -------
+        Tensor | (Tensor, Tensor)
+            Partial charges or tuple of partial charges and energies.
+
+        Raises
+        ------
+        ConvergenceError
+            CG did not converge, e.g. because the Coulomb matrix is not
+            positive definite (not under ``vmap`` or ``torch.compile``,
+            where the charges of that system are NaN instead).
+        """
+        # Both right-hand sides as a batch dimension: (..., 2, nat)
+        B = torch.stack((cc, constraint), dim=-2)
+
+        result = storch.linsolve.implicit_solve(
+            _coulomb_matvec,
+            B,
+            coulomb,
+            method="cg",
+            preconditioner=_jacobi,
+            rtol=CG_RTOL,
+            atol=CG_ATOL,
+        )
+        X = storch.linsolve.require_convergence(result, name="EEQ CG solve")
+        z = X[..., 0, :]  # A^{-1} b, (..., nat)
+        y = X[..., 1, :]  # A^{-1} C, (..., nat)
+
+        return _schur_charges(
+            z, y, cc, constraint, coulomb, total_charge, return_energy
+        )
+
+
+CG_RTOL = 1e-12
+"""Relative tolerance of the CG solves of ``solve_mode="cg"`` (raised by
+tad-mctc to 10 machine epsilons for single precision)."""
+
+CG_ATOL = 1e-14
+"""Absolute tolerance of the CG solves of ``solve_mode="cg"``."""
+
+
+def _coulomb_matvec(x: Tensor, coulomb: Tensor) -> Tensor:
+    """Coulomb matrix times the right-hand sides, ``(..., k, nat)``."""
+    return torch.einsum("...ij,...kj->...ki", coulomb, x)
+
+
+def _jacobi(r: Tensor, coulomb: Tensor) -> Tensor:
+    """Jacobi (diagonal) preconditioner of the Coulomb matrix."""
+    return r / coulomb.diagonal(dim1=-2, dim2=-1).unsqueeze(-2)
+
+
+def _schur_charges(
+    z: Tensor,
+    y: Tensor,
+    cc: Tensor,
+    constraint: Tensor,
+    coulomb: Tensor,
+    total_charge: Tensor,
+    return_energy: bool,
+) -> Tensor | tuple[Tensor, Tensor]:
+    """
+    Charges (and energies) from the solutions ``z = A^{-1} b`` and
+    ``y = A^{-1} C`` of the Schur-complement method.
+    """
+    # m = (C^T z - Q) / (C^T y) ; shape (..., 1)
+    num = (constraint * z).sum(dim=-1, keepdim=True) - total_charge
+    den = (constraint * y).sum(dim=-1, keepdim=True)
+    m = num / den
+
+    # q = z - y * m (broadcast m over the `nat` dimension)
+    q = z - y * m  # (..., nat)
+
+    # Do not compute energy unless specifically requested
+    if return_energy is False:
+        return q
+
+    # E_scalar = 0.5 * x^T @ A @ x - b @ x^T
+    # E_vector =  x * (0.5 * A @ x - b)
+    e = q * (0.5 * torch.einsum("...ij,...j->...i", coulomb, q) - cc)
+
+    return q, e
 
 
 def _coulomb_matrix_0d(

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import pytest
 import torch
+from tad_mctc._version import __tversion__
 from tad_mctc.io.structure import Structure
 from tad_mctc.tools.compile import compile_fullgraph
 from tad_mctc.tools.testing import requires_compile
@@ -54,6 +55,8 @@ def fixture_structure(request: pytest.FixtureRequest) -> Structure:
         pytest.param(("SiH4",), "schur", id="single-schur"),
         pytest.param(("LiH", "ZnOOH-"), "schur", id="batch-schur"),
         pytest.param(("SiH4",), "linear", id="single-linear"),
+        pytest.param(("SiH4",), "cg", id="single-cg"),
+        pytest.param(("LiH", "ZnOOH-"), "cg", id="batch-cg"),
     ],
     indirect=["structure"],
 )
@@ -78,14 +81,28 @@ def test_construction_inside_compile(
     assert torch.allclose(e, eref, atol=1e-10, rtol=0)
 
 
-def test_compile_jacrev() -> None:
+@pytest.mark.parametrize(
+    "solve_mode",
+    [
+        "schur",
+        pytest.param(
+            "cg",
+            marks=pytest.mark.skipif(
+                __tversion__ < (2, 11, 0),
+                reason="Dynamo rejects the implicit-solve Function under "
+                "`jacrev` before PyTorch 2.11",
+            ),
+        ),
+    ],
+)
+def test_compile_jacrev(solve_mode: SolveMode) -> None:
     """``torch.compile(jacrev(f))``: compiled forces equal eager ones."""
     structure = load_structure("SiH4", DD_DOUBLE, 0.0)
     model = eeq.EEQModel.param2019(**DD_DOUBLE)
 
     def energy(positions: Tensor) -> Tensor:
         s = structure.replace(positions=positions)
-        return model(s, return_energy=True)[1].sum()
+        return model(s, return_energy=True, solve_mode=solve_mode)[1].sum()
 
     forces = compile_fullgraph(jacrev(energy))(structure.positions)
     ref = jacrev(energy)(structure.positions)
