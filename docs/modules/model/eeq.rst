@@ -50,9 +50,15 @@ and eager forward/reverse compositions.
 Select accepted systems before nonlinear downstream operations on masked
 charges: even first derivatives can be contaminated by ``0 * NaN`` if
 nonlinear operations run on failed entries before selection. EEQ's own
-quadratic energy uses the reconstructed charges before the final KKT mask,
-then masks charges and energies separately at the output boundary. This
-preserves valid-lane energy gradients when another reconstruction fails.
+auxiliary and KKT failure masks are deferred until after Schur
+reconstruction and quadratic energy evaluation. Failed auxiliary iterates
+are replaced with finite placeholders before implicit derivatives are
+attached; their original
+convergence status is retained. Both auxiliary solves and both KKT checks
+must pass to accept a system. Charges and energies are masked separately
+at the output boundary. This preserves valid-system charge and energy
+derivatives with shared model parameters, including when another system's
+auxiliary solve fails.
 
 For higher derivatives involving shared parameters, select accepted outputs
 before differentiating, or differentiate per system with ``vmap``.

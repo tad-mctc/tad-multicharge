@@ -26,9 +26,11 @@ reverse and forward mode.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 import torch
+from tad_mctc import storch
 from tad_mctc.autograd import dgradcheck, dgradgradcheck, no_vmap_fallback
 from tad_mctc.exceptions import ConvergenceError
 from tad_mctc.io.structure import Structure
@@ -303,3 +305,97 @@ def test_not_positive_definite() -> None:
     qref = model(batch, solve_mode="cg")
     assert_close(q[0], qref[0], 1e-10)
     assert torch.isnan(q[1]).all()
+
+
+@pytest.mark.parametrize("differentiate", [jacrev, jacfwd])
+@pytest.mark.parametrize("composition", ["vmap-derivative", "derivative-vmap"])
+@pytest.mark.parametrize("param", ["chi", "kcn", "eta", "rad"])
+@pytest.mark.parametrize("nonfinite", [False, True], ids=["raw", "nonfinite"])
+def test_not_positive_definite_shared_derivatives(
+    differentiate: Callable,
+    composition: str,
+    param: str,
+    nonfinite: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failed SiH4 solves preserve LiH derivatives through shared parameters."""
+    batch = load_batch(["LiH", "SiH4"], DD_DOUBLE, [0.0, 0.0])
+    lih = load_structure("LiH", DD_DOUBLE, 0.0)
+    model = _model()
+    eta = model.eta.clone()
+    eta[14] = -10.0  # Only the silicon-containing system is indefinite.
+    model = model.replace(eta=eta)
+
+    if nonfinite:
+        cg = storch.linsolve.cg
+
+        def nonfinite_failed_iterates(
+            *args: Any, **kwargs: Any
+        ) -> storch.linsolve.LinearSolveResult:
+            # A solver breakdown can leave nonfinite raw iterates. Inject
+            # these before implicit_solve attaches its derivative rules;
+            # successful solves and all original diagnostics are unchanged.
+            result = cg(*args, **kwargs)
+            converged = result.status == storch.linsolve.STATUS_CONVERGED
+            return result._replace(
+                solution=torch.where(
+                    converged.unsqueeze(-1), result.solution, torch.nan
+                )
+            )
+
+        monkeypatch.setattr(storch.linsolve, "cg", nonfinite_failed_iterates)
+
+    def parameter_model(value: Tensor) -> eeq.EEQModel:
+        # Entry zero is reserved for padding, not a physical element.
+        # Differentiate the physical parameters while keeping it constant.
+        full = torch.cat((getattr(model, param)[:1], value))
+        return model.replace(**{param: full})
+
+    def observable(
+        value: Tensor, structure: Structure
+    ) -> tuple[Tensor, Tensor]:
+        charges, energies = parameter_model(value)(
+            structure, solve_mode="cg", return_energy=True
+        )
+        # Sum only after EEQ has evaluated and masked its atomic energies.
+        return charges, energies.sum(-1)
+
+    def batched(value: Tensor) -> tuple[Tensor, Tensor]:
+        return vmap(lambda structure: observable(value, structure))(batch)
+
+    parameter = getattr(model, param)[1:]
+    charges, energies = batched(parameter)
+    assert torch.isfinite(charges[0]).all()
+    assert torch.isfinite(energies[0])
+    assert torch.isnan(charges[1]).all()
+    assert torch.isnan(energies[1])
+
+    with no_vmap_fallback():
+        if composition == "vmap-derivative":
+            # Each system differentiates the same parameter tensor.
+            charge_jacobian, energy_gradient = vmap(
+                differentiate(observable, argnums=0), in_dims=(None, 0)
+            )(parameter, batch)
+        else:
+            # Reverse mode must also handle inactive failed-output
+            # cotangents when differentiating the accepted system jointly.
+            charge_jacobian, energy_gradient = differentiate(batched)(parameter)
+
+    # This independent, unpadded LiH calculation uses the dense solver.
+    def reference(value: Tensor) -> tuple[Tensor, Tensor]:
+        q, e = parameter_model(value)(
+            lih, solve_mode="schur", return_energy=True
+        )
+        return q, e.sum()
+
+    reference_jacobian, reference_gradient = differentiate(reference)(parameter)
+    nat = lih.numbers.shape[-1]
+    assert_close(charge_jacobian[0, :nat], reference_jacobian)
+    assert torch.equal(
+        charge_jacobian[0, nat:], torch.zeros_like(charge_jacobian[0, nat:])
+    )
+    assert_close(energy_gradient[0], reference_gradient)
+    # Only derivatives with respect to elements actually used in SiH4 are
+    # active; unused parameter entries may correctly have structural zeros.
+    assert torch.isnan(charge_jacobian[1, :, [0, 13]]).all()
+    assert torch.isnan(energy_gradient[1, [0, 13]]).all()

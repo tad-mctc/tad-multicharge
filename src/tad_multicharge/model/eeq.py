@@ -50,7 +50,7 @@ tensor([-0.8347, -0.8347,  0.2731,  0.2886,  0.2731,  0.2731,  0.2886,  0.2731])
 from __future__ import annotations
 
 import math
-from typing import Literal, overload
+from typing import Any, Callable, Literal, overload
 
 import torch
 from tad_mctc import storch
@@ -508,12 +508,20 @@ class EEQModel(ChargeModel):
             _coulomb_matvec,
             B,
             coulomb,
-            method="cg",
+            method=_cg_finite_iterates,
+            symmetric=True,
             preconditioner=_jacobi,
             rtol=CG_RTOL,
             atol=CG_ATOL,
         )
-        X = storch.linsolve.require_convergence(result, name="EEQ CG solve")
+        # Preserve eager exceptions, but defer transformed failure masks
+        # until after the nonlinear reconstruction and energy evaluation.
+        if not is_vmapped(result.status):
+            storch.linsolve.require_convergence(result, name="EEQ CG solve")
+        aux_converged = (result.status == storch.linsolve.STATUS_CONVERGED).all(
+            dim=-1
+        )
+        X = result.solution
         z = X[..., 0, :]  # A^{-1} b, (..., nat)
         y = X[..., 1, :]  # A^{-1} C, (..., nat)
 
@@ -526,6 +534,7 @@ class EEQModel(ChargeModel):
             total_charge,
             return_energy,
             check_residual=True,
+            aux_converged=aux_converged,
         )
 
 
@@ -547,6 +556,35 @@ def _jacobi(r: Tensor, coulomb: Tensor) -> Tensor:
     return r / coulomb.diagonal(dim1=-2, dim2=-1).unsqueeze(-2)
 
 
+def _cg_finite_iterates(
+    matvec: Callable[..., Tensor],
+    rhs: Tensor,
+    *params: Any,
+    **options: Any,
+) -> storch.linsolve.LinearSolveResult:
+    """Keep failed CG iterates finite without changing their diagnostics."""
+    result = storch.linsolve.cg(matvec, rhs, *params, **options)
+    converged = result.status == storch.linsolve.STATUS_CONVERGED
+    # implicit_solve runs this numerical method on detached inputs, then
+    # attaches its derivative rules. Replace failed iterates here so its
+    # saved primal values cannot introduce 0 * NaN in matrix pullbacks.
+    # Ones also give the Schur constraint solve a nonzero denominator.
+    # Original statuses still reject these placeholders at the outputs.
+    solution = torch.where(
+        converged.unsqueeze(-1), result.solution, torch.ones_like(rhs)
+    )
+    # Construct explicitly: older Dynamo versions cannot trace _replace.
+    return storch.linsolve.LinearSolveResult(
+        solution=solution,
+        residual=result.residual,
+        target=result.target,
+        iterations=result.iterations,
+        status=result.status,
+        refinement_status=result.refinement_status,
+        fallback_iterations=result.fallback_iterations,
+    )
+
+
 def _schur_charges(
     z: Tensor,
     y: Tensor,
@@ -557,6 +595,7 @@ def _schur_charges(
     return_energy: bool,
     *,
     check_residual: bool = False,
+    aux_converged: Tensor | None = None,
 ) -> Tensor | tuple[Tensor, Tensor]:
     """
     Charges (and energies) from the solutions ``z = A^{-1} b`` and
@@ -570,27 +609,35 @@ def _schur_charges(
     # q = z - y * m (broadcast m over the `nat` dimension)
     q = z - y * m  # (..., nat)
 
-    checked_charges = q
+    accepted = None
     if check_residual:
-        checked_charges = _check_cg_residuals(
+        accepted = _check_cg_residuals(
             q, m, cc, constraint, coulomb, total_charge
         )
+        if aux_converged is not None:
+            accepted = accepted & aux_converged
 
     # Do not compute energy unless specifically requested
     if return_energy is False:
-        return checked_charges
+        return (
+            q
+            if accepted is None
+            else storch.linsolve.mask_converged(q, accepted.unsqueeze(-1))
+        )
 
     # E_scalar = 0.5 * x^T @ A @ x - b @ x^T
     # E_vector =  x * (0.5 * A @ x - b)
-    # Use the reconstructed charges before the final KKT mask. Squaring or
-    # multiplying masked NaNs here can produce NaN cotangents even for a
+    # Use the reconstructed charges before the final acceptance mask.
+    # Squaring or multiplying masked NaNs can produce NaN cotangents for a
     # selected valid system. Mask the energies only at the output boundary.
     e = q * (0.5 * torch.einsum("...ij,...j->...i", coulomb, q) - cc)
-    if check_residual:
-        accepted = torch.isfinite(checked_charges).all(dim=-1, keepdim=True)
-        e = storch.linsolve.mask_converged(e, accepted)
-
-    return checked_charges, e
+    if accepted is None:
+        return q, e
+    mask = accepted.unsqueeze(-1)
+    return (
+        storch.linsolve.mask_converged(q, mask),
+        storch.linsolve.mask_converged(e, mask),
+    )
 
 
 def _check_cg_residuals(
@@ -602,7 +649,7 @@ def _check_cg_residuals(
     total_charge: Tensor,
 ) -> Tensor:
     r"""
-    Check the physical equations after CG's Schur reconstruction.
+    Return per-system acceptance of CG's reconstructed physical equations.
 
     In the equations below, ``A`` is ``coulomb``, ``b`` is ``cc``, ``c`` is
     ``constraint``, ``q`` is ``charges`` and ``mu`` is ``multiplier``.
@@ -616,8 +663,8 @@ def _check_cg_residuals(
     Charge conservation is checked independently against
     ``atol + 10 eps * max(1, sum(|c q|) + |Q|)`` (charges in electrons).
     This detects charge lost to cancellation in ``z - mu y``. Failed
-    checks raise eagerly or mask the affected systems with NaNs under
-    ``vmap`` and compilation.
+    checks raise eagerly. Under ``vmap`` and compilation the returned mask
+    lets the caller invalidate charges and energies after evaluating both.
     """
     # These quantities decide acceptance; derivatives still come from the
     # implicit solve and Schur reconstruction, not from the diagnostics.
@@ -660,6 +707,7 @@ def _check_cg_residuals(
         ).clamp_min(1.0)
         charge_target = CG_ATOL + roundoff_factor * charge_rounding_scale
 
+    accepted = torch.ones_like(charge_residual, dtype=torch.bool)
     for residual, target, name in (
         (stationarity_residual, stationarity_target, "stationarity"),
         (charge_residual, charge_target, "total charge"),
@@ -669,14 +717,10 @@ def _check_cg_residuals(
             & torch.isfinite(target)
             & (residual <= target)
         )
+        accepted = accepted & valid
         # is_vmapped also returns True while compiling: neither transform
         # permits inspecting tensor values in Python to raise an exception.
         if is_vmapped(valid):
-            # The public mask preserves invalid derivatives as well as
-            # values, without wrapping this KKT check in a solver result.
-            charges = storch.linsolve.mask_converged(
-                charges, valid.unsqueeze(-1)
-            )
             continue
 
         if bool(valid.all()):
@@ -693,7 +737,7 @@ def _check_cg_residuals(
             f"EEQ CG reconstruction violates KKT {name}: "
             f"residual {worst_residual:.3e}, target {worst_target:.3e}."
         )
-    return charges
+    return accepted
 
 
 def _coulomb_matrix_0d(

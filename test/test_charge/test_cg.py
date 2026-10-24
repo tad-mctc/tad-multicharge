@@ -51,6 +51,53 @@ DERIVATIVES = {
 }
 
 
+def test_auxiliary_failure_with_passing_reconstruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Passing KKT checks cannot override a failed auxiliary CG status."""
+    model = eeq.EEQModel.param2019(**DD_DOUBLE)
+    constraint = torch.ones(4, **DD_DOUBLE)
+    total_charge = constraint.new_zeros(1)
+    identity = torch.eye(4, **DD_DOUBLE)
+    matrices = torch.stack((identity, 2 * identity))
+    cg = storch.linsolve.cg
+
+    def failed_second_system(
+        matvec: Callable, rhs: Tensor, coulomb: Tensor, **options: Any
+    ) -> storch.linsolve.LinearSolveResult:
+        result = cg(matvec, rhs, coulomb, **options)
+        return result._replace(
+            status=torch.where(
+                coulomb[0, 0] > 1,
+                storch.linsolve.STATUS_NOT_CONVERGED,
+                result.status,
+            ),
+        )
+
+    monkeypatch.setattr(storch.linsolve, "cg", failed_second_system)
+
+    # The finite placeholders z=y=1 reconstruct q=0, mu=1. With b=c=1
+    # and Q=0 those satisfy KKT even for the deliberately failed system.
+    assert eeq._check_cg_residuals(
+        torch.zeros_like(constraint),
+        constraint.new_ones(1),
+        constraint,
+        constraint,
+        matrices[1],
+        total_charge,
+    )
+
+    charges, energies = vmap(
+        lambda matrix: model._solve_cg(
+            constraint, constraint, matrix, total_charge, True
+        )
+    )(matrices)
+    assert torch.equal(charges[0], torch.zeros_like(constraint))
+    assert torch.equal(energies[0], torch.zeros_like(constraint))
+    assert torch.isnan(charges[1]).all()
+    assert torch.isnan(energies[1]).all()
+
+
 def test_amplified_multiplier(monkeypatch: pytest.MonkeyPatch) -> None:
     """Converged auxiliary solves can still violate KKT stationarity."""
     model = eeq.EEQModel.param2019(**DD_DOUBLE)
