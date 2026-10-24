@@ -534,7 +534,6 @@ class EEQModel(ChargeModel):
             coulomb,
             total_charge,
             return_energy,
-            check_residual=True,
             aux_converged=aux_converged,
         )
 
@@ -595,12 +594,13 @@ def _schur_charges(
     total_charge: Tensor,
     return_energy: bool,
     *,
-    check_residual: bool = False,
     aux_converged: Tensor | None = None,
 ) -> Tensor | tuple[Tensor, Tensor]:
     """
     Charges (and energies) from the solutions ``z = A^{-1} b`` and
     ``y = A^{-1} C`` of the Schur-complement method.
+
+    Supplying auxiliary CG convergence also enables final KKT checks.
     """
     # m = (C^T z - Q) / (C^T y) ; shape (..., 1)
     num = (constraint * z).sum(dim=-1, keepdim=True) - total_charge
@@ -611,12 +611,11 @@ def _schur_charges(
     q = z - y * m  # (..., nat)
 
     accepted = None
-    if check_residual:
+    if aux_converged is not None:
         accepted = _check_cg_residuals(
             q, m, cc, constraint, coulomb, total_charge
         )
-        if aux_converged is not None:
-            accepted = accepted & aux_converged
+        accepted = accepted & aux_converged
 
     # Do not compute energy unless specifically requested
     if return_energy is False:
