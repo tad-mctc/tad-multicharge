@@ -42,12 +42,24 @@ charges and energies of the affected systems become NaN. A converged
 auxiliary solve can consequently still be rejected. Residual checks are
 diagnostics and do not add derivatives to the implicit solve.
 
+The mask also invalidates failed-system derivatives. This requires the
+shared convergence-mask AD fix in ``tad-mctc>=0.11.2``. Accepted systems
+retain their usual charge derivatives under per-system ``vmap``/``jacrev``
+and eager forward/reverse compositions. For higher derivatives involving
+shared parameters, select accepted outputs before differentiating, or
+differentiate per system with ``vmap``. Joint higher derivatives that
+include failed outputs can propagate NaNs through ordinary ``0 * NaN``
+arithmetic outside the mask.
+
 Transforms and performance
 --------------------------
 
 Eager derivatives, including Hessians and third derivatives, are supported.
 Compiled higher-order differentiation is unsupported. Compiled first-order
 ``jacrev`` requires PyTorch 2.11 or newer.
+Use ordinary batched tensors for compiled first derivatives; compiling a
+``vmap`` around the convergence mask is unsupported because Dynamo can
+discard its custom derivative rules.
 
 Under ``vmap`` and ``torch.compile``, the upstream CG loop runs its full
 iteration budget, currently twice the atom count, even after individual

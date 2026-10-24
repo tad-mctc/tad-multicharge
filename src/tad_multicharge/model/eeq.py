@@ -663,7 +663,21 @@ def _check_cg_residuals(
         # is_vmapped also returns True while compiling: neither transform
         # permits inspecting tensor values in Python to raise an exception.
         if is_vmapped(valid):
-            charges = torch.where(valid.unsqueeze(-1), charges, torch.nan)
+            # Reuse the convergence mask's AD rules: a constant NaN branch
+            # would mask only the primal and silently return zero Jacobians.
+            status = torch.where(
+                valid,
+                storch.linsolve.STATUS_CONVERGED,
+                storch.linsolve.STATUS_NOT_CONVERGED,
+            )
+            checked = storch.linsolve.LinearSolveResult(
+                solution=charges,
+                residual=residual,
+                target=target,
+                iterations=torch.zeros_like(status),
+                status=status,
+            )
+            charges = storch.linsolve.require_convergence(checked)
             continue
 
         if bool(valid.all()):

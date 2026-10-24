@@ -19,16 +19,18 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 import torch
 from tad_mctc import storch
+from tad_mctc._version import __tversion__
 from tad_mctc.autograd import no_vmap_fallback
 from tad_mctc.exceptions import ConvergenceError
 from tad_mctc.tools.testing import requires_compile
 from tad_mctc.typing import DD, Tensor
-from torch.func import vmap
+from torch.func import jacfwd, jacrev, vmap
 
 from tad_multicharge.model import eeq
 
@@ -36,6 +38,17 @@ from ..conftest import DEVICE
 from ..utils import load_structure
 
 DD_DOUBLE: DD = {"device": DEVICE, "dtype": torch.double}
+
+DERIVATIVES = {
+    "reverse": (1, jacrev),
+    "forward": (1, jacfwd),
+    "reverse-reverse": (2, lambda f: jacrev(jacrev(f))),
+    "forward-reverse": (2, lambda f: jacfwd(jacrev(f))),
+    "reverse-forward": (2, lambda f: jacrev(jacfwd(f))),
+    "forward-forward": (2, lambda f: jacfwd(jacfwd(f))),
+    "third": (3, lambda f: jacfwd(jacrev(jacrev(f)))),
+    "third-forward": (3, lambda f: jacfwd(jacfwd(jacfwd(f)))),
+}
 
 
 def test_amplified_multiplier(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,6 +143,150 @@ def test_charge_cancellation(execution: str) -> None:
 
     assert torch.equal(charges[0], torch.zeros_like(rhs))
     assert torch.isnan(charges[1]).all()
+
+
+def _failed_reconstruction(
+    failure: str, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Callable[[Tensor], Tensor], Tensor]:
+    """Create a valid Q=0 lane and a failed Q=1 lane with finite CG solves."""
+    model = eeq.EEQModel.param2019(**DD_DOUBLE)
+    constraint = torch.ones(4, **DD_DOUBLE)
+    if failure == "charge":
+        # Q=1 disappears when reconstructing charges from values near 1e16.
+        coulomb = torch.eye(4, **DD_DOUBLE)
+        rhs = torch.full((4,), 1e16, **DD_DOUBLE)
+    else:
+        # Only Q=1 has a large multiplier, amplifying this converged y error.
+        coulomb = 1e6 * torch.eye(4, **DD_DOUBLE)
+        rhs = constraint.new_tensor([1.0, -1.0, 0.0, 0.0])
+        implicit_solve = storch.linsolve.implicit_solve
+
+        def perturbed_solve(
+            *args: Any, **kwargs: Any
+        ) -> storch.linsolve.LinearSolveResult:
+            result = implicit_solve(*args, **kwargs)
+            solutions = result.solution.clone()
+            solutions[..., 1, :] += 2e-19 * rhs
+            residual = torch.linalg.vector_norm(
+                eeq._coulomb_matvec(solutions, coulomb)
+                - torch.stack((rhs, constraint)),
+                dim=-1,
+            )
+            assert (residual <= result.target).all()
+            return result._replace(solution=solutions, residual=residual)
+
+        monkeypatch.setattr(storch.linsolve, "implicit_solve", perturbed_solve)
+
+    def charges(total_charge: Tensor) -> Tensor:
+        return model._solve_cg(
+            rhs, constraint, coulomb, total_charge.unsqueeze(-1), False
+        )
+
+    return charges, constraint.new_tensor([0.0, 1.0])
+
+
+@pytest.mark.parametrize("failure", ["charge", "stationarity"])
+@pytest.mark.parametrize("derivative", DERIVATIVES)
+@pytest.mark.parametrize(
+    "shared", [False, True], ids=["vmap-derivative", "derivative-vmap-shared"]
+)
+def test_failed_reconstruction_derivatives(
+    failure: str, derivative: str, shared: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rejected primal also has invalid derivatives, without poisoning its neighbor."""
+    charges, total_charges = _failed_reconstruction(failure, monkeypatch)
+    primal = vmap(charges)(total_charges)
+    assert torch.isfinite(primal[0]).all()
+    assert torch.isnan(primal[1]).all()
+
+    order, differentiate = DERIVATIVES[derivative]
+    with no_vmap_fallback():
+        if shared:
+            # A common differentiable input catches contamination from a
+            # failed lane's zero cotangent when differentiating the valid output.
+            def batch(offset: Tensor) -> Tensor:
+                return vmap(charges)(total_charges + offset)
+
+            derivatives = differentiate(batch)(total_charges.new_zeros(()))
+        else:
+            derivatives = vmap(differentiate(charges))(total_charges)
+
+    # For A proportional to I, dq/dQ = 1/4 and higher Q derivatives vanish.
+    expected = torch.full_like(derivatives[0], 0.25 if order == 1 else 0.0)
+    assert torch.allclose(derivatives[0], expected, atol=1e-10, rtol=0)
+    assert torch.isnan(derivatives[1]).all()
+
+
+@pytest.mark.parametrize("failure", ["charge", "stationarity"])
+@pytest.mark.parametrize("differentiate", [jacrev, jacfwd])
+def test_failed_reconstruction_joint_jacobian(
+    failure: str, differentiate: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The valid output row keeps both its own derivative and zero cross-lane block."""
+    charges, total_charges = _failed_reconstruction(failure, monkeypatch)
+    with no_vmap_fallback():
+        jacobian = differentiate(vmap(charges))(total_charges)
+    assert torch.allclose(
+        jacobian[0, :, 0],
+        torch.full_like(jacobian[0, :, 0], 0.25),
+        atol=1e-10,
+        rtol=0,
+    )
+    assert torch.equal(jacobian[0, :, 1], torch.zeros_like(jacobian[0, :, 1]))
+    assert torch.isnan(jacobian[1, :, 1]).all()
+
+
+@pytest.mark.parametrize("failure", ["charge", "stationarity"])
+def test_failed_reconstruction_nested_vmap(
+    failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two vmap dimensions retain independent valid and failed derivative masks."""
+    charges, total_charges = _failed_reconstruction(failure, monkeypatch)
+    totals = torch.stack((total_charges, total_charges.flip(0)))
+    with no_vmap_fallback():
+        derivatives = vmap(vmap(jacrev(charges)))(totals)
+    expected = torch.full_like(derivatives[0, 0], 0.25)
+    assert torch.allclose(derivatives[0, 0], expected, atol=1e-10, rtol=0)
+    assert torch.allclose(derivatives[1, 1], expected, atol=1e-10, rtol=0)
+    assert torch.isnan(derivatives[0, 1]).all()
+    assert torch.isnan(derivatives[1, 0]).all()
+
+
+@pytest.mark.parametrize("failure", ["charge", "stationarity"])
+@pytest.mark.parametrize("differentiate", [jacrev, jacfwd])
+def test_failed_reconstruction_eager_derivative(
+    failure: str, differentiate: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a batched/compiled context, differentiation still raises on failure."""
+    charges, total_charges = _failed_reconstruction(failure, monkeypatch)
+    with pytest.raises(ConvergenceError, match=failure):
+        differentiate(charges)(total_charges[1])
+
+
+@requires_compile
+@pytest.mark.skipif(
+    __tversion__ < (2, 11, 0),
+    reason="Compiled jacrev of implicit_solve needs PyTorch >= 2.11",
+)
+@pytest.mark.usefixtures("reset_dynamo")
+def test_failed_reconstruction_compile_jacrev(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Supported compiled first derivatives also preserve failed and valid lanes."""
+    charges, total_charges = _failed_reconstruction("charge", monkeypatch)
+    # Here the leading dimension is an ordinary batch. Compilation makes
+    # the KKT checks use the same mask as vmap, without a Python exception.
+    jacobian = torch.compile(jacrev(charges), backend="eager", fullgraph=True)(
+        total_charges
+    )
+    assert torch.allclose(
+        jacobian[0, :, 0],
+        torch.full_like(jacobian[0, :, 0], 0.25),
+        atol=1e-10,
+        rtol=0,
+    )
+    assert torch.equal(jacobian[0, :, 1], torch.zeros_like(jacobian[0, :, 1]))
+    assert torch.isnan(jacobian[1, :, 1]).all()
 
 
 @pytest.mark.parametrize("size", [4, 32])
