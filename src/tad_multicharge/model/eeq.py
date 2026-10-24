@@ -50,7 +50,8 @@ tensor([-0.8347, -0.8347,  0.2731,  0.2886,  0.2731,  0.2731,  0.2886,  0.2731])
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Literal, overload
+from collections.abc import Callable
+from typing import Any, Literal, overload
 
 import torch
 from tad_mctc import storch
