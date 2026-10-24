@@ -54,8 +54,9 @@ from typing import Literal, overload
 
 import torch
 from tad_mctc import storch
-from tad_mctc.autograd import is_functorch_tensor
+from tad_mctc.autograd import is_functorch_tensor, is_vmapped
 from tad_mctc.batch import real_atoms, real_pairs
+from tad_mctc.exceptions import ConvergenceError
 from tad_mctc.io.structure import Structure
 from tad_mctc.ncoord import cn_eeq
 from tad_mctc.ncoord.common import CNModel
@@ -200,10 +201,11 @@ class EEQModel(ChargeModel):
               factorization (default, recommended).
             - ``"linear"``: Solve the full bordered linear system directly.
               Less stable and slower for large systems.
-            - ``"cg"``: Schur-complement method with the two SPD solves done
-              by Jacobi-preconditioned conjugate gradient, with implicit
-              derivatives (see :meth:`_solve_cg`). Can be faster for large
-              systems; slower for small ones.
+            - ``"cg"``: Dense Schur-complement method with the two SPD solves
+              done by Jacobi-preconditioned conjugate gradient, with implicit
+              derivatives (see :meth:`_solve_cg`). The Coulomb matrix still
+              needs quadratic memory; performance depends on conditioning,
+              system size and execution mode.
 
             Defaults to ``"schur"``.
 
@@ -224,8 +226,20 @@ class EEQModel(ChargeModel):
         ValueError
             ``solve_mode`` is unknown.
         ConvergenceError
-            ``solve_mode="cg"`` did not converge (outside of ``vmap`` and
-            ``torch.compile``, where the charges are NaN instead).
+            ``solve_mode="cg"`` did not converge, or the reconstructed
+            stationarity or charge residual is too large (outside of
+            ``vmap`` and ``torch.compile``, where the charges are NaN instead).
+
+        Notes
+        -----
+        The CG mode checks the final KKT stationarity and total charge as
+        well as the two auxiliary solves. Failure raises eagerly; under
+        ``vmap`` or ``torch.compile`` the affected systems return NaNs.
+        Higher derivatives are supported in eager mode. Compiled higher
+        derivatives are unsupported; compiled first-order ``jacrev`` needs
+        PyTorch 2.11 or newer. Under ``vmap`` and compilation, CG executes
+        its full upstream iteration budget (currently twice the atom count),
+        including iterations after individual systems have converged.
 
         Example
         -------
@@ -504,7 +518,14 @@ class EEQModel(ChargeModel):
         y = X[..., 1, :]  # A^{-1} C, (..., nat)
 
         return _schur_charges(
-            z, y, cc, constraint, coulomb, total_charge, return_energy
+            z,
+            y,
+            cc,
+            constraint,
+            coulomb,
+            total_charge,
+            return_energy,
+            check_residual=True,
         )
 
 
@@ -534,6 +555,8 @@ def _schur_charges(
     coulomb: Tensor,
     total_charge: Tensor,
     return_energy: bool,
+    *,
+    check_residual: bool = False,
 ) -> Tensor | tuple[Tensor, Tensor]:
     """
     Charges (and energies) from the solutions ``z = A^{-1} b`` and
@@ -547,6 +570,9 @@ def _schur_charges(
     # q = z - y * m (broadcast m over the `nat` dimension)
     q = z - y * m  # (..., nat)
 
+    if check_residual:
+        q = _check_cg_residuals(q, m, cc, constraint, coulomb, total_charge)
+
     # Do not compute energy unless specifically requested
     if return_energy is False:
         return q
@@ -556,6 +582,72 @@ def _schur_charges(
     e = q * (0.5 * torch.einsum("...ij,...j->...i", coulomb, q) - cc)
 
     return q, e
+
+
+def _check_cg_residuals(
+    q: Tensor,
+    multiplier: Tensor,
+    cc: Tensor,
+    constraint: Tensor,
+    coulomb: Tensor,
+    total_charge: Tensor,
+) -> Tensor:
+    r"""
+    Check the physical equations after CG's Schur reconstruction.
+
+    Stationarity uses ``atol + rtol_eff * ||(b, Q)||_2`` plus a rounding
+    allowance ``10 eps * (|||A| |q|||_2 + ||c mu||_2)``. Unlike the auxiliary
+    solves, this target does not grow with the multiplier except for
+    roundoff. Here ``rtol_eff = max(CG_RTOL, 10 eps)``.
+
+    Charge conservation is checked independently against
+    ``atol + 10 eps * max(1, sum(|c q|) + |Q|)`` (charges in electrons).
+    Scaling this by the reconstructed
+    charges, rather than the auxiliary solutions, detects charge lost to
+    cancellation in ``z - mu y``. Diagnostics do not enter the AD graph.
+    """
+    with torch.no_grad():
+        eps = 10 * torch.finfo(q.dtype).eps
+        rtol = max(CG_RTOL, eps)
+        aq = torch.einsum("...ij,...j->...i", coulomb, q)
+        cm = constraint * multiplier
+        stationarity = torch.linalg.vector_norm(aq + cm - cc, dim=-1)
+        rhs_norm = torch.sqrt(
+            cc.square().sum(-1) + total_charge.squeeze(-1).square()
+        )
+        rounding_scale = torch.linalg.vector_norm(
+            torch.einsum("...ij,...j->...i", coulomb.abs(), q.abs()), dim=-1
+        ) + torch.linalg.vector_norm(cm, dim=-1)
+        stationarity_target = CG_ATOL + rtol * rhs_norm + eps * rounding_scale
+
+        cq = constraint * q
+        charge = (cq.sum(-1) - total_charge.squeeze(-1)).abs()
+        charge_target = CG_ATOL + eps * (
+            cq.abs().sum(-1) + total_charge.squeeze(-1).abs()
+        ).clamp_min(1.0)
+
+    for residual, target, name in (
+        (stationarity, stationarity_target, "stationarity"),
+        (charge, charge_target, "total charge"),
+    ):
+        valid = (
+            torch.isfinite(residual)
+            & torch.isfinite(target)
+            & (residual <= target)
+        )
+        if not is_vmapped(valid):
+            if not bool(valid.all()):
+                ratio = (residual / target).nan_to_num(torch.inf)
+                worst = torch.where(valid, -torch.inf, ratio).argmax()
+                value = residual.flatten()[worst].item()
+                limit = target.flatten()[worst].item()
+                raise ConvergenceError(
+                    f"EEQ CG reconstruction violates KKT {name}: "
+                    f"residual {value:.3e}, target {limit:.3e}."
+                )
+        else:
+            q = torch.where(valid.unsqueeze(-1), q, torch.nan)
+    return q
 
 
 def _coulomb_matrix_0d(
@@ -671,7 +763,12 @@ def get_eeq(
     return model(structure, return_energy=return_energy, solve_mode=solve_mode)
 
 
-def get_charges(structure: Structure, *, cn: CNModel = cn_eeq) -> Tensor:
+def get_charges(
+    structure: Structure,
+    *,
+    cn: CNModel = cn_eeq,
+    solve_mode: SolveMode = "schur",
+) -> Tensor:
     """
     Calculate atomic EEQ charges.
 
@@ -682,16 +779,23 @@ def get_charges(structure: Structure, *, cn: CNModel = cn_eeq) -> Tensor:
         charge; absent means neutral.
     cn : CNModel, optional
         Coordination number. Defaults to :data:`tad_mctc.ncoord.cn_eeq`.
+    solve_mode : SolveMode, optional
+        Solution method, see :meth:`EEQModel.solve`. Defaults to ``"schur"``.
 
     Returns
     -------
     Tensor
         Atomic charges, shape ``(..., nat)``.
     """
-    return get_eeq(structure, cn=cn, return_energy=False)
+    return get_eeq(structure, cn=cn, return_energy=False, solve_mode=solve_mode)
 
 
-def get_energy(structure: Structure, *, cn: CNModel = cn_eeq) -> Tensor:
+def get_energy(
+    structure: Structure,
+    *,
+    cn: CNModel = cn_eeq,
+    solve_mode: SolveMode = "schur",
+) -> Tensor:
     """
     Calculate atomic EEQ energies.
 
@@ -702,10 +806,14 @@ def get_energy(structure: Structure, *, cn: CNModel = cn_eeq) -> Tensor:
         charge; absent means neutral.
     cn : CNModel, optional
         Coordination number. Defaults to :data:`tad_mctc.ncoord.cn_eeq`.
+    solve_mode : SolveMode, optional
+        Solution method, see :meth:`EEQModel.solve`. Defaults to ``"schur"``.
 
     Returns
     -------
     Tensor
         Atom-resolved energies, shape ``(..., nat)``.
     """
-    return get_eeq(structure, cn=cn, return_energy=True)[1]
+    return get_eeq(structure, cn=cn, return_energy=True, solve_mode=solve_mode)[
+        1
+    ]

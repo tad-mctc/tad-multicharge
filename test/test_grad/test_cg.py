@@ -80,12 +80,23 @@ def test_charges_and_energies(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", SAMPLES)
-def test_forces(name: str) -> None:
-    structure = load_structure(name, DD_DOUBLE, 0.0)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_forces(name: str, dtype: torch.dtype) -> None:
+    """Position derivatives agree in single and double precision."""
+    dd: DD = {"device": DEVICE, "dtype": dtype}
+    structure = load_structure(name, dd, 0.0)
+    model = eeq.EEQModel.param2019(**dd)
 
-    forces = jacrev(_energy(structure, "cg"))(structure.positions)
-    ref = jacrev(_energy(structure, "schur"))(structure.positions)
-    assert_close(forces, ref)
+    def energy(positions: Tensor, mode: SolveMode) -> Tensor:
+        return model(
+            structure.replace(positions=positions),
+            return_energy=True,
+            solve_mode=mode,
+        )[1].sum()
+
+    forces = jacrev(lambda p: energy(p, "cg"))(structure.positions)
+    ref = jacrev(lambda p: energy(p, "schur"))(structure.positions)
+    assert_close(forces, ref, 1e-5 if dtype == torch.float32 else 1e-9)
 
 
 HESSIANS = {
@@ -117,11 +128,14 @@ def test_third_derivative() -> None:
 
 
 @pytest.mark.parametrize("param", ["chi", "kcn", "eta", "rad"])
-def test_parameters(param: str) -> None:
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_parameters(param: str, dtype: torch.dtype) -> None:
     """Gradient and Hessian with respect to every model parameter."""
-    structure = load_structure("ZnOOH-", DD_DOUBLE, -1.0)
+    dd: DD = {"device": DEVICE, "dtype": dtype}
+    structure = load_structure("ZnOOH-", dd, -1.0)
     cn = cn_eeq(structure)
-    model = _model()
+    model = eeq.EEQModel.param2019(**dd)
+    tol = 1e-4 if dtype == torch.float32 else 1e-9
 
     def energy(mode: SolveMode) -> Callable:
         def f(value: Tensor) -> Tensor:
@@ -133,30 +147,36 @@ def test_parameters(param: str) -> None:
         return f
 
     value = getattr(model, param)
-    assert_close(jacrev(energy("cg"))(value), jacrev(energy("schur"))(value))
+    assert_close(
+        jacrev(energy("cg"))(value), jacrev(energy("schur"))(value), tol
+    )
     assert_close(
         jacfwd(jacrev(energy("cg")))(value),
         jacrev(jacrev(energy("schur")))(value),
+        tol,
     )
 
 
-def test_mixed_position_parameter() -> None:
-    """Derivative of the forces with respect to the electronegativities."""
-    structure = load_structure("SiH4", DD_DOUBLE, 0.0)
-    model = _model()
+@pytest.mark.parametrize("param", ["chi", "kcn", "eta", "rad"])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_mixed_position_parameter(param: str, dtype: torch.dtype) -> None:
+    """Force derivatives agree for all four model parameter families."""
+    dd: DD = {"device": DEVICE, "dtype": dtype}
+    structure = load_structure("SiH4", dd, 0.0)
+    model = eeq.EEQModel.param2019(**dd)
 
     def energy(mode: SolveMode) -> Callable:
-        def f(positions: Tensor, chi: Tensor) -> Tensor:
+        def f(positions: Tensor, value: Tensor) -> Tensor:
             s = structure.replace(positions=positions)
-            m = model.replace(chi=chi)
+            m = model.replace(**{param: value})
             return m(s, return_energy=True, solve_mode=mode)[1].sum()
 
         return f
 
-    args = (structure.positions, model.chi)
+    args = (structure.positions, getattr(model, param))
     out = jacrev(jacrev(energy("cg"), argnums=0), argnums=1)(*args)
     ref = jacrev(jacrev(energy("schur"), argnums=0), argnums=1)(*args)
-    assert_close(out, ref)
+    assert_close(out, ref, 1e-4 if dtype == torch.float32 else 1e-9)
 
 
 def test_total_charge() -> None:

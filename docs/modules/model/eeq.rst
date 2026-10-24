@@ -1,2 +1,62 @@
+EEQ solve modes
+===============
+
+``solve_mode="schur"`` remains the recommended default, using a dense
+Cholesky factorization. ``"linear"`` solves the full bordered system.
+``"cg"`` uses Jacobi-preconditioned conjugate gradient for the two auxiliary
+Schur systems, with implicit derivatives. All three modes construct the
+same dense Coulomb matrix and require quadratic memory. The CG mode does
+not implement the matrix-free, projected-CG backend.
+
+The keyword is available through ``model(...)``, ``model.solve(...)``,
+``get_eeq(...)``, ``get_charges(...)`` and ``get_energy(...)``.
+
+Numerical acceptance
+--------------------
+
+Auxiliary convergence alone does not certify the reconstructed solution:
+for auxiliary residuals :math:`r_z=Az-b` and :math:`r_y=Ay-c`, stationarity
+has residual :math:`Aq+c\mu-b=r_z-\mu r_y`. CG therefore checks the final
+stationarity and charge residuals independently, including when only
+charges are requested.
+
+With :math:`\tau=\max(10^{-12},10\epsilon)` and :math:`a=10^{-14}`,
+stationarity must satisfy
+
+.. math::
+
+   \|Aq+c\mu-b\|_2 \le a + \tau\|(b,Q)\|_2
+       + 10\epsilon\left(\|\,|A|\,|q|\,\|_2 + \|c\mu\|_2\right).
+
+The final term allows for rounding in evaluating the equation; the solver
+tolerance itself does not increase with :math:`|\mu|`. Charge conservation
+uses the separate rounding-scale bound (charges in electrons)
+
+.. math::
+
+   |c^Tq-Q| \le a + 10\epsilon\max\left(1,\sum_i|c_iq_i|+|Q|\right).
+
+Failure of either auxiliary solve or either final check raises
+``ConvergenceError`` in eager execution. Under ``vmap`` and compilation,
+charges and energies of the affected systems become NaN. A converged
+auxiliary solve can consequently still be rejected. Residual checks are
+diagnostics and do not add derivatives to the implicit solve.
+
+Transforms and performance
+--------------------------
+
+Eager derivatives, including Hessians and third derivatives, are supported.
+Compiled higher-order differentiation is unsupported. Compiled first-order
+``jacrev`` requires PyTorch 2.11 or newer.
+
+Under ``vmap`` and ``torch.compile``, the upstream CG loop runs its full
+iteration budget, currently twice the atom count, even after individual
+systems converge. Eager, vectorized and compiled performance should be
+measured separately. ``examples/benchmark-eeq.py`` compares forward charges,
+forces and all four parameter gradients, reports auxiliary iteration counts
+and peak process memory, and records failed acceptance checks explicitly.
+The accompanying ``examples/benchmark-eeq.md`` records a small CPU comparison;
+it does not establish a general speedup or large-system crossover.
+
 .. automodule:: tad_multicharge.model.eeq
    :members:
