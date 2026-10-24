@@ -52,11 +52,7 @@ Compiled higher-order differentiation is unsupported. Compiled first-order
 Under ``vmap`` and ``torch.compile``, the upstream CG loop runs its full
 iteration budget, currently twice the atom count, even after individual
 systems converge. Eager, vectorized and compiled performance should be
-measured separately. ``examples/benchmark-eeq.py`` compares forward charges,
-forces and all four parameter gradients, reports auxiliary iteration counts
-and peak process memory, and records failed acceptance checks explicitly.
-The accompanying ``examples/benchmark-eeq.md`` records a small CPU comparison;
-it does not establish a general speedup or large-system crossover.
+measured separately.
 
 .. automodule:: tad_multicharge.model.eeq
    :members:

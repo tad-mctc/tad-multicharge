@@ -334,7 +334,6 @@ CG checks the reconstructed KKT stationarity and total charge, in addition to bo
 
 Higher derivatives work in eager mode; compiled higher derivatives are unsupported, and compiled first-order `jacrev` requires PyTorch 2.11 or newer.
 Under `vmap` and compilation, CG runs the full upstream iteration budget (currently twice the atom count).
-The [benchmark and results](examples/benchmark-eeq.md) compare execution modes separately; no general speedup over Cholesky–Schur is established.
 
 ## Contributing
 

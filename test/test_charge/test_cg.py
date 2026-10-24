@@ -25,6 +25,7 @@ import torch
 from tad_mctc import storch
 from tad_mctc.autograd import no_vmap_fallback
 from tad_mctc.exceptions import ConvergenceError
+from tad_mctc.tools.testing import requires_compile
 from tad_mctc.typing import DD, Tensor
 from torch.func import vmap
 
@@ -67,7 +68,10 @@ def test_amplified_multiplier(monkeypatch: pytest.MonkeyPatch) -> None:
         model._solve_cg(b, c, a, total, False)
 
 
-@pytest.mark.parametrize("execution", ["eager", "batch", "vmap", "compile"])
+@pytest.mark.parametrize(
+    "execution",
+    ["eager", "batch", "vmap", pytest.param("compile", marks=requires_compile)],
+)
 def test_charge_cancellation(execution: str) -> None:
     """Loss of total charge raises or masks only the failing systems."""
     model = eeq.EEQModel.param2019(**DD_DOUBLE)
