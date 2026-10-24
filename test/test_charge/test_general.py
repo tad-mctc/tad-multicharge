@@ -194,6 +194,8 @@ def test_absent_charge_is_neutral() -> None:
 def test_convenience_solve_mode(solve_mode: SolveMode) -> None:
     """Charge and energy helpers forward the solver and CN choices."""
     structure = _structure()
+    # A nondefault CN checks that adding the solver keyword preserves the
+    # helpers' existing coordination-number customization as well.
     cn = cn_eeq.replace(cutoff=10.0)
     q, e = eeq.get_eeq(
         structure, cn=cn, return_energy=True, solve_mode=solve_mode
@@ -204,6 +206,7 @@ def test_convenience_solve_mode(solve_mode: SolveMode) -> None:
     assert torch.equal(
         eeq.get_energy(structure, cn=cn, solve_mode=solve_mode), e
     )
+    # An invalid mode must reach validation, not silently use the default.
     for helper in (eeq.get_charges, eeq.get_energy):
         with pytest.raises(ValueError, match="Unknown EEQ solve mode"):
             helper(structure, solve_mode="invalid")  # type: ignore[arg-type]

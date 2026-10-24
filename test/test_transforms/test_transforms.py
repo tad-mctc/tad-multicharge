@@ -128,6 +128,8 @@ def test_vmap_over_structures(solve_mode: SolveMode) -> None:
 def test_vmap_over_models(solve_mode: SolveMode) -> None:
     """`vmap` over a stack of models (a `Node`) matches a loop."""
     structure, model = _single(), _model()
+    # Vary all four parameter families across the pytree batch: chi/kcn
+    # change the RHS, while eta/rad change the Coulomb operator itself.
     models = [
         model,
         model.replace(chi=model.chi * 1.1, kcn=model.kcn * 0.9),
@@ -141,6 +143,8 @@ def test_vmap_over_models(solve_mode: SolveMode) -> None:
 
     looped = torch.stack([m(structure, solve_mode=solve_mode) for m in models])
     assert torch.allclose(batched, looped, atol=1e-10)
+    # The full bordered solve supplies an independent reference in addition
+    # to the vmap-versus-loop comparison using the selected backend.
     reference = torch.stack([m(structure, solve_mode="linear") for m in models])
     assert torch.allclose(batched, reference, atol=1e-10, rtol=0)
 

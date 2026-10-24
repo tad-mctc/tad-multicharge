@@ -88,15 +88,23 @@ def test_forces(name: str, dtype: torch.dtype) -> None:
     model = eeq.EEQModel.param2019(**dd)
 
     def energy(positions: Tensor, mode: SolveMode) -> Tensor:
-        return model(
+        _, atomic_energies = model(
             structure.replace(positions=positions),
             return_energy=True,
             solve_mode=mode,
-        )[1].sum()
+        )
+        return atomic_energies.sum()
 
-    forces = jacrev(lambda p: energy(p, "cg"))(structure.positions)
-    ref = jacrev(lambda p: energy(p, "schur"))(structure.positions)
-    assert_close(forces, ref, 1e-5 if dtype == torch.float32 else 1e-9)
+    # Comparing energy gradients also compares forces: their common minus
+    # sign does not affect agreement between the two solvers.
+    gradient = jacrev(lambda positions: energy(positions, "cg"))(
+        structure.positions
+    )
+    reference_gradient = jacrev(lambda positions: energy(positions, "schur"))(
+        structure.positions
+    )
+    tolerance = 1e-5 if dtype == torch.float32 else 1e-9
+    assert_close(gradient, reference_gradient, tolerance)
 
 
 HESSIANS = {
@@ -135,26 +143,30 @@ def test_parameters(param: str, dtype: torch.dtype) -> None:
     structure = load_structure("ZnOOH-", dd, -1.0)
     cn = cn_eeq(structure)
     model = eeq.EEQModel.param2019(**dd)
-    tol = 1e-4 if dtype == torch.float32 else 1e-9
+    tolerance = 1e-4 if dtype == torch.float32 else 1e-9
 
-    def energy(mode: SolveMode) -> Callable:
-        def f(value: Tensor) -> Tensor:
-            m = model.replace(**{param: value})
-            return m.solve(structure, cn, return_energy=True, solve_mode=mode)[
-                1
-            ].sum()
+    def energy_for_mode(mode: SolveMode) -> Callable[[Tensor], Tensor]:
+        def energy(value: Tensor) -> Tensor:
+            parameter_model = model.replace(**{param: value})
+            _, atomic_energies = parameter_model.solve(
+                structure, cn, return_energy=True, solve_mode=mode
+            )
+            return atomic_energies.sum()
 
-        return f
+        return energy
 
-    value = getattr(model, param)
-    assert_close(
-        jacrev(energy("cg"))(value), jacrev(energy("schur"))(value), tol
-    )
-    assert_close(
-        jacfwd(jacrev(energy("cg")))(value),
-        jacrev(jacrev(energy("schur")))(value),
-        tol,
-    )
+    parameter = getattr(model, param)
+    cg_energy = energy_for_mode("cg")
+    reference_energy = energy_for_mode("schur")
+    gradient = jacrev(cg_energy)(parameter)
+    reference_gradient = jacrev(reference_energy)(parameter)
+    assert_close(gradient, reference_gradient, tolerance)
+
+    # Forward-over-reverse exercises both implicit AD rules; the dense
+    # reverse-over-reverse result supplies the reference Hessian.
+    hessian = jacfwd(jacrev(cg_energy))(parameter)
+    reference_hessian = jacrev(jacrev(reference_energy))(parameter)
+    assert_close(hessian, reference_hessian, tolerance)
 
 
 @pytest.mark.parametrize("param", ["chi", "kcn", "eta", "rad"])
@@ -165,18 +177,29 @@ def test_mixed_position_parameter(param: str, dtype: torch.dtype) -> None:
     structure = load_structure("SiH4", dd, 0.0)
     model = eeq.EEQModel.param2019(**dd)
 
-    def energy(mode: SolveMode) -> Callable:
-        def f(positions: Tensor, value: Tensor) -> Tensor:
-            s = structure.replace(positions=positions)
-            m = model.replace(**{param: value})
-            return m(s, return_energy=True, solve_mode=mode)[1].sum()
+    def energy_for_mode(mode: SolveMode) -> Callable[[Tensor, Tensor], Tensor]:
+        def energy(positions: Tensor, value: Tensor) -> Tensor:
+            displaced_structure = structure.replace(positions=positions)
+            parameter_model = model.replace(**{param: value})
+            _, atomic_energies = parameter_model(
+                displaced_structure, return_energy=True, solve_mode=mode
+            )
+            return atomic_energies.sum()
 
-        return f
+        return energy
 
     args = (structure.positions, getattr(model, param))
-    out = jacrev(jacrev(energy("cg"), argnums=0), argnums=1)(*args)
-    ref = jacrev(jacrev(energy("schur"), argnums=0), argnums=1)(*args)
-    assert_close(out, ref, 1e-4 if dtype == torch.float32 else 1e-9)
+    # Differentiate dE/dR (argument 0) with respect to the selected model
+    # parameter (argument 1). For eta/rad this includes the dependence of
+    # the Coulomb matrix on that parameter, as well as the charge response.
+    mixed_derivative = jacrev(
+        jacrev(energy_for_mode("cg"), argnums=0), argnums=1
+    )(*args)
+    reference_mixed_derivative = jacrev(
+        jacrev(energy_for_mode("schur"), argnums=0), argnums=1
+    )(*args)
+    tolerance = 1e-4 if dtype == torch.float32 else 1e-9
+    assert_close(mixed_derivative, reference_mixed_derivative, tolerance)
 
 
 def test_total_charge() -> None:

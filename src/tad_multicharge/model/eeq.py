@@ -585,7 +585,7 @@ def _schur_charges(
 
 
 def _check_cg_residuals(
-    q: Tensor,
+    charges: Tensor,
     multiplier: Tensor,
     cc: Tensor,
     constraint: Tensor,
@@ -595,59 +595,92 @@ def _check_cg_residuals(
     r"""
     Check the physical equations after CG's Schur reconstruction.
 
+    In the equations below, ``A`` is ``coulomb``, ``b`` is ``cc``, ``c`` is
+    ``constraint``, ``q`` is ``charges`` and ``mu`` is ``multiplier``.
+
     Stationarity uses ``atol + rtol_eff * ||(b, Q)||_2`` plus a rounding
-    allowance ``10 eps * (|||A| |q|||_2 + ||c mu||_2)``. Unlike the auxiliary
-    solves, this target does not grow with the multiplier except for
-    roundoff. Here ``rtol_eff = max(CG_RTOL, 10 eps)``.
+    allowance ``10 eps * (|||A| |q|||_2 + ||c mu||_2)``, where
+    ``rtol_eff = max(CG_RTOL, 10 eps)``. The multiplier enters only the
+    rounding allowance; a large multiplier does not relax the solver
+    tolerance itself.
 
     Charge conservation is checked independently against
     ``atol + 10 eps * max(1, sum(|c q|) + |Q|)`` (charges in electrons).
-    Scaling this by the reconstructed
-    charges, rather than the auxiliary solutions, detects charge lost to
-    cancellation in ``z - mu y``. Diagnostics do not enter the AD graph.
+    This detects charge lost to cancellation in ``z - mu y``. Failed
+    checks raise eagerly or mask the affected systems with NaNs under
+    ``vmap`` and compilation.
     """
+    # These quantities decide acceptance; derivatives still come from the
+    # implicit solve and Schur reconstruction, not from the diagnostics.
     with torch.no_grad():
-        eps = 10 * torch.finfo(q.dtype).eps
-        rtol = max(CG_RTOL, eps)
-        aq = torch.einsum("...ij,...j->...i", coulomb, q)
-        cm = constraint * multiplier
-        stationarity = torch.linalg.vector_norm(aq + cm - cc, dim=-1)
-        rhs_norm = torch.sqrt(
-            cc.square().sum(-1) + total_charge.squeeze(-1).square()
-        )
-        rounding_scale = torch.linalg.vector_norm(
-            torch.einsum("...ij,...j->...i", coulomb.abs(), q.abs()), dim=-1
-        ) + torch.linalg.vector_norm(cm, dim=-1)
-        stationarity_target = CG_ATOL + rtol * rhs_norm + eps * rounding_scale
+        roundoff_factor = 10 * torch.finfo(charges.dtype).eps
+        effective_rtol = max(CG_RTOL, roundoff_factor)
+        requested_charge = total_charge.squeeze(-1)
 
-        cq = constraint * q
-        charge = (cq.sum(-1) - total_charge.squeeze(-1)).abs()
-        charge_target = CG_ATOL + eps * (
-            cq.abs().sum(-1) + total_charge.squeeze(-1).abs()
+        # Stationarity: A q + c mu = b. Each residual/target below has one
+        # value per molecular system, with shape (...,).
+        coulomb_charges = torch.einsum("...ij,...j->...i", coulomb, charges)
+        constraint_multiplier = constraint * multiplier
+        stationarity_residual = torch.linalg.vector_norm(
+            coulomb_charges + constraint_multiplier - cc, dim=-1
+        )
+        rhs_norm = torch.sqrt(cc.square().sum(-1) + requested_charge.square())
+
+        # |A| |q| bounds the scale of the matrix-vector product before
+        # cancellation. Allow rounding at that scale when evaluating KKT.
+        absolute_coulomb_charges = torch.einsum(
+            "...ij,...j->...i", coulomb.abs(), charges.abs()
+        )
+        stationarity_rounding_scale = torch.linalg.vector_norm(
+            absolute_coulomb_charges, dim=-1
+        ) + torch.linalg.vector_norm(constraint_multiplier, dim=-1)
+        stationarity_target = (
+            CG_ATOL
+            + effective_rtol * rhs_norm
+            + roundoff_factor * stationarity_rounding_scale
+        )
+
+        # Charge conservation: c^T q = Q. Using the final charges in this
+        # scale detects cancellation between large auxiliary solutions.
+        constraint_charges = constraint * charges
+        charge_residual = (constraint_charges.sum(-1) - requested_charge).abs()
+        # The one-electron floor also allows roundoff in small, neutral
+        # systems, whose partial charges can otherwise give a tiny scale.
+        charge_rounding_scale = (
+            constraint_charges.abs().sum(-1) + requested_charge.abs()
         ).clamp_min(1.0)
+        charge_target = CG_ATOL + roundoff_factor * charge_rounding_scale
 
     for residual, target, name in (
-        (stationarity, stationarity_target, "stationarity"),
-        (charge, charge_target, "total charge"),
+        (stationarity_residual, stationarity_target, "stationarity"),
+        (charge_residual, charge_target, "total charge"),
     ):
         valid = (
             torch.isfinite(residual)
             & torch.isfinite(target)
             & (residual <= target)
         )
-        if not is_vmapped(valid):
-            if not bool(valid.all()):
-                ratio = (residual / target).nan_to_num(torch.inf)
-                worst = torch.where(valid, -torch.inf, ratio).argmax()
-                value = residual.flatten()[worst].item()
-                limit = target.flatten()[worst].item()
-                raise ConvergenceError(
-                    f"EEQ CG reconstruction violates KKT {name}: "
-                    f"residual {value:.3e}, target {limit:.3e}."
-                )
-        else:
-            q = torch.where(valid.unsqueeze(-1), q, torch.nan)
-    return q
+        # is_vmapped also returns True while compiling: neither transform
+        # permits inspecting tensor values in Python to raise an exception.
+        if is_vmapped(valid):
+            charges = torch.where(valid.unsqueeze(-1), charges, torch.nan)
+            continue
+
+        if bool(valid.all()):
+            continue
+
+        # Compare each failing system with its own target, so the error
+        # reports the largest relative violation even in a mixed batch.
+        # A non-finite residual counts as the worst violation.
+        residual_ratio = (residual / target).nan_to_num(torch.inf)
+        worst_index = torch.where(valid, -torch.inf, residual_ratio).argmax()
+        worst_residual = residual.flatten()[worst_index].item()
+        worst_target = target.flatten()[worst_index].item()
+        raise ConvergenceError(
+            f"EEQ CG reconstruction violates KKT {name}: "
+            f"residual {worst_residual:.3e}, target {worst_target:.3e}."
+        )
+    return charges
 
 
 def _coulomb_matrix_0d(
