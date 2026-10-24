@@ -146,7 +146,10 @@ def test_charge_cancellation(execution: str) -> None:
 
 
 def _failed_reconstruction(
-    failure: str, monkeypatch: pytest.MonkeyPatch
+    failure: str,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    return_energy: bool = False,
 ) -> tuple[Callable[[Tensor], Tensor], Tensor]:
     """Create a valid Q=0 lane and a failed Q=1 lane with finite CG solves."""
     model = eeq.EEQModel.param2019(**DD_DOUBLE)
@@ -178,11 +181,40 @@ def _failed_reconstruction(
         monkeypatch.setattr(storch.linsolve, "implicit_solve", perturbed_solve)
 
     def charges(total_charge: Tensor) -> Tensor:
-        return model._solve_cg(
-            rhs, constraint, coulomb, total_charge.unsqueeze(-1), False
+        result = model._solve_cg(
+            rhs, constraint, coulomb, total_charge.unsqueeze(-1), return_energy
         )
+        return result[1] if return_energy else result
 
     return charges, constraint.new_tensor([0.0, 1.0])
+
+
+@pytest.mark.parametrize("failure", ["charge", "stationarity"])
+@pytest.mark.parametrize("differentiate", [jacrev, jacfwd])
+def test_failed_reconstruction_energy_derivative(
+    failure: str, differentiate: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Quadratic EEQ energies do not poison an accepted lane's shared-input gradient."""
+    energies, total_charges = _failed_reconstruction(
+        failure, monkeypatch, return_energy=True
+    )
+
+    def batch(offset: Tensor) -> Tensor:
+        return vmap(energies)(total_charges + offset)
+
+    offset = total_charges.new_zeros(())
+    primal = batch(offset)
+    assert torch.isfinite(primal[0]).all()
+    assert torch.isnan(primal[1]).all()
+
+    derivatives = differentiate(batch)(offset)
+    # At Q=0, dE_i/dQ=(Aq-b)_i/4. The two fixtures have b=1e16, q=0
+    # and Aq=b respectively, giving -2.5e15 or zero per atom.
+    expected = torch.full_like(
+        derivatives[0], -2.5e15 if failure == "charge" else 0.0
+    )
+    assert torch.allclose(derivatives[0], expected, atol=1e-10, rtol=1e-12)
+    assert torch.isnan(derivatives[1]).all()
 
 
 @pytest.mark.parametrize("failure", ["charge", "stationarity"])

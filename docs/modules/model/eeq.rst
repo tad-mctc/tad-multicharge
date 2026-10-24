@@ -42,12 +42,21 @@ charges and energies of the affected systems become NaN. A converged
 auxiliary solve can consequently still be rejected. Residual checks are
 diagnostics and do not add derivatives to the implicit solve.
 
-The mask also invalidates failed-system derivatives. This requires the
-shared convergence-mask AD fix in ``tad-mctc>=0.11.2``. Accepted systems
+The public ``tad_mctc.storch.linsolve.mask_converged`` utility also invalidates
+failed-system derivatives. This requires ``tad-mctc>=0.11.2``. Accepted systems
 retain their usual charge derivatives under per-system ``vmap``/``jacrev``
-and eager forward/reverse compositions. For higher derivatives involving
-shared parameters, select accepted outputs before differentiating, or
-differentiate per system with ``vmap``. Joint higher derivatives that
+and eager forward/reverse compositions.
+
+Select accepted systems before nonlinear downstream operations on masked
+charges: even first derivatives can be contaminated by ``0 * NaN`` if
+nonlinear operations run on failed entries before selection. EEQ's own
+quadratic energy uses the reconstructed charges before the final KKT mask,
+then masks charges and energies separately at the output boundary. This
+preserves valid-lane energy gradients when another reconstruction fails.
+
+For higher derivatives involving shared parameters, select accepted outputs
+before differentiating, or differentiate per system with ``vmap``.
+Joint higher derivatives that
 include failed outputs can propagate NaNs through ordinary ``0 * NaN``
 arithmetic outside the mask.
 

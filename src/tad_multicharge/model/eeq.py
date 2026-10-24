@@ -570,18 +570,27 @@ def _schur_charges(
     # q = z - y * m (broadcast m over the `nat` dimension)
     q = z - y * m  # (..., nat)
 
+    checked_charges = q
     if check_residual:
-        q = _check_cg_residuals(q, m, cc, constraint, coulomb, total_charge)
+        checked_charges = _check_cg_residuals(
+            q, m, cc, constraint, coulomb, total_charge
+        )
 
     # Do not compute energy unless specifically requested
     if return_energy is False:
-        return q
+        return checked_charges
 
     # E_scalar = 0.5 * x^T @ A @ x - b @ x^T
     # E_vector =  x * (0.5 * A @ x - b)
+    # Use the reconstructed charges before the final KKT mask. Squaring or
+    # multiplying masked NaNs here can produce NaN cotangents even for a
+    # selected valid system. Mask the energies only at the output boundary.
     e = q * (0.5 * torch.einsum("...ij,...j->...i", coulomb, q) - cc)
+    if check_residual:
+        accepted = torch.isfinite(checked_charges).all(dim=-1, keepdim=True)
+        e = storch.linsolve.mask_converged(e, accepted)
 
-    return q, e
+    return checked_charges, e
 
 
 def _check_cg_residuals(
@@ -663,21 +672,11 @@ def _check_cg_residuals(
         # is_vmapped also returns True while compiling: neither transform
         # permits inspecting tensor values in Python to raise an exception.
         if is_vmapped(valid):
-            # Reuse the convergence mask's AD rules: a constant NaN branch
-            # would mask only the primal and silently return zero Jacobians.
-            status = torch.where(
-                valid,
-                storch.linsolve.STATUS_CONVERGED,
-                storch.linsolve.STATUS_NOT_CONVERGED,
+            # The public mask preserves invalid derivatives as well as
+            # values, without wrapping this KKT check in a solver result.
+            charges = storch.linsolve.mask_converged(
+                charges, valid.unsqueeze(-1)
             )
-            checked = storch.linsolve.LinearSolveResult(
-                solution=charges,
-                residual=residual,
-                target=target,
-                iterations=torch.zeros_like(status),
-                status=status,
-            )
-            charges = storch.linsolve.require_convergence(checked)
             continue
 
         if bool(valid.all()):
