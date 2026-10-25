@@ -409,3 +409,100 @@ def test_compilation_rejected() -> None:
 
     with pytest.raises(RuntimeError, match="matrix-free.*torch.compile"):
         compiled(structure.positions)
+
+
+@pytest.mark.parametrize("solve_mode", ["schur", "cg", "matrix-free"])
+@pytest.mark.parametrize("direct", [False, True], ids=["call", "solve"])
+@pytest.mark.parametrize("return_energy", [False, True])
+def test_zero_sized_batch(
+    solve_mode: str,
+    direct: bool,
+    return_energy: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty batches retain dense-backend shapes and bypass coarse setup."""
+    structure = Structure(
+        numbers=torch.empty(0, 2, dtype=torch.long, device=DEVICE),
+        positions=torch.empty(0, 2, 3, **DD_DOUBLE),
+    )
+    model = _model()
+    coordination_numbers = torch.empty(0, 2, **DD_DOUBLE)
+
+    def forbidden_setup(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("An empty batch requested a coarse preconditioner")
+
+    monkeypatch.setattr(linsolve, "cell_index", forbidden_setup)
+    monkeypatch.setattr(mf, "pair_cell_sums", forbidden_setup)
+
+    if direct:
+        result = model.solve(
+            structure,
+            coordination_numbers,
+            solve_mode=solve_mode,
+            return_energy=return_energy,
+        )
+    else:
+        result = model(
+            structure, solve_mode=solve_mode, return_energy=return_energy
+        )
+
+    outputs = result if return_energy else (result,)
+    for output in outputs:
+        assert output.shape == (0, 2)
+        assert output.dtype == torch.double
+        assert output.device == structure.positions.device
+
+
+def test_masking_after_energy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Final charge and energy masks receive finite, physically related inputs."""
+    batch = load_batch(["LiH", "SiH4"], DD_DOUBLE, [0.0, 0.0])
+    model = _model()
+    eta = model.eta.clone()
+    eta[14] = -10.0
+    model = model.replace(eta=eta)
+    captured = []
+    mask_converged = linsolve.mask_converged
+
+    # Drive the transformed failure policy on an ordinary batch so the spy
+    # can inspect values without extracting data from functorch wrappers.
+    def transformed_status(status: Tensor) -> bool:
+        return True
+
+    def capture_mask(value: Tensor, accepted: Tensor) -> Tensor:
+        assert torch.isfinite(value).all()
+        captured.append((value.detach().clone(), accepted.detach().clone()))
+        return mask_converged(value, accepted)
+
+    monkeypatch.setattr(mf, "is_vmapped", transformed_status)
+    monkeypatch.setattr(linsolve, "mask_converged", capture_mask)
+    charges, energies = model(
+        batch, solve_mode="matrix-free", return_energy=True
+    )
+
+    assert len(captured) == 2
+    raw_charges, charge_mask = captured[0]
+    raw_energies, energy_mask = captured[1]
+    assert torch.equal(charge_mask, energy_mask)
+    assert charge_mask[:, 0].tolist() == [True, False]
+
+    # The dense matrix is a tiny independent energy reference, including
+    # the indefinite system whose unmasked energy must remain finite.
+    numbers = batch.numbers
+    real = numbers != 0
+    cn = model.cn(batch)
+    rhs = torch.where(
+        real, -model.chi[numbers] + torch.sqrt(cn) * model.kcn[numbers], 0.0
+    )
+    matrix = eeq._coulomb_matrix_0d(
+        numbers, batch.positions, model.rad[numbers], model.eta[numbers]
+    )
+    expected_energy = raw_charges * (
+        0.5 * torch.einsum("...ij,...j->...i", matrix, raw_charges) - rhs
+    )
+    torch.testing.assert_close(
+        raw_energies, expected_energy, atol=1e-12, rtol=0
+    )
+    torch.testing.assert_close(charges[0], raw_charges[0])
+    torch.testing.assert_close(energies[0], raw_energies[0])
+    assert torch.isnan(charges[1]).all()
+    assert torch.isnan(energies[1]).all()
