@@ -62,14 +62,22 @@ from tad_mctc.io.structure import Structure
 from tad_mctc.ncoord import cn_eeq
 from tad_mctc.ncoord.common import CNModel
 from tad_mctc.tools import is_compiling
-from tad_mctc.tree import child
+from tad_mctc.tree import child, context
 from tad_mctc.typing import DD, Tensor, get_default_dtype
 
 from ..param import eeq2019
 from ._ewald import coulomb_matrix_3d
+from ._matrix_free import MatrixFreeOptions
+from ._matrix_free import solve as matrix_free_solve
 from .base import ChargeModel, SolveMode
 
-__all__ = ["EEQModel", "get_charges", "get_eeq", "get_energy"]
+__all__ = [
+    "EEQModel",
+    "MatrixFreeOptions",
+    "get_charges",
+    "get_eeq",
+    "get_energy",
+]
 
 
 class EEQModel(ChargeModel):
@@ -109,6 +117,9 @@ class EEQModel(ChargeModel):
     # A factory, not `default=cn_eeq`: `torch.compile` cannot trace a `Node`
     # as a plain field default when the model is built in compiled code.
     cn: CNModel = child(default_factory=lambda: cn_eeq)
+    # Resolve default options only when this backend is used. Keeping None
+    # here preserves construction of dense models inside torch.compile.
+    matrix_free: MatrixFreeOptions | None = context(default=None)
 
     @classmethod
     def param2019(
@@ -207,6 +218,10 @@ class EEQModel(ChargeModel):
               derivatives (see :meth:`_solve_cg`). The Coulomb matrix still
               needs quadratic memory; performance depends on conditioning,
               system size and execution mode.
+            - ``"matrix-free"``: Nonperiodic projected CG with tiled
+              Gaussian Coulomb products, bounded balancing-preconditioner
+              memory and optional mixed-precision refinement. Configure
+              with ``model.replace(matrix_free=MatrixFreeOptions(...))``.
 
             Defaults to ``"schur"``.
 
@@ -242,6 +257,13 @@ class EEQModel(ChargeModel):
         its full upstream iteration budget (currently twice the atom count),
         including iterations after individual systems have converged.
 
+        The matrix-free mode supports eager forward/reverse derivatives,
+        including higher derivatives, and ``vmap``. Compiling the whole
+        matrix-free model is unsupported. Its CUDA tile products can be
+        fused internally. First derivatives use tiled memory; higher
+        derivatives, including mixed force-parameter derivatives, can
+        retain quadratic graphs. See :class:`MatrixFreeOptions`.
+
         Example
         -------
         >>> import torch
@@ -268,8 +290,18 @@ class EEQModel(ChargeModel):
         >>> print(total_charge.grad)
         tensor(1.2625)
         """
-        if solve_mode not in ("schur", "linear", "cg"):
+        if solve_mode not in ("schur", "linear", "cg", "matrix-free"):
             raise ValueError(f"Unknown EEQ solve mode '{solve_mode}'!")
+
+        if solve_mode == "matrix-free":
+            if is_compiling():
+                raise RuntimeError(
+                    "The matrix-free EEQ mode does not support torch.compile."
+                )
+            if structure.lattice is not None:
+                raise NotImplementedError(
+                    "Matrix-free EEQ supports nonperiodic structures only."
+                )
 
         self._check_structure(structure)
 
@@ -294,6 +326,21 @@ class EEQModel(ChargeModel):
         ##################
 
         rad, eta = self.rad[numbers], self.eta[numbers]
+
+        # Dispatch before any dense matrix, pair mask or distance allocation.
+        if solve_mode == "matrix-free":
+            return matrix_free_solve(
+                cc,
+                real.to(positions.dtype),
+                positions,
+                rad,
+                eta,
+                total_charge,
+                return_energy,
+                self.matrix_free,
+                rtol=CG_RTOL,
+                atol=CG_ATOL,
+            )
 
         if structure.lattice is None:
             coulomb = _coulomb_matrix_0d(numbers, positions, rad, eta)
