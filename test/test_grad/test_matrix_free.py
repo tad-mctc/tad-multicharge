@@ -36,14 +36,42 @@ from ..conftest import DEVICE
 from ..utils import load_batch, load_structure
 
 DD_DOUBLE: DD = {"dtype": torch.double, "device": DEVICE}
+
+
+def _reverse_reverse(function: Callable) -> Callable:
+    first_derivative = jacrev(function)
+    return jacrev(first_derivative)
+
+
+def _forward_reverse(function: Callable) -> Callable:
+    first_derivative = jacrev(function)
+    return jacfwd(first_derivative)
+
+
+def _reverse_forward(function: Callable) -> Callable:
+    first_derivative = jacfwd(function)
+    return jacrev(first_derivative)
+
+
+def _forward_forward(function: Callable) -> Callable:
+    first_derivative = jacfwd(function)
+    return jacfwd(first_derivative)
+
+
+def _third_derivative(function: Callable) -> Callable:
+    first_derivative = jacrev(function)
+    second_derivative = jacrev(first_derivative)
+    return jacfwd(second_derivative)
+
+
 DERIVATIVES = {
     "reverse": jacrev,
     "forward": jacfwd,
-    "reverse-reverse": lambda f: jacrev(jacrev(f)),
-    "forward-reverse": lambda f: jacfwd(jacrev(f)),
-    "reverse-forward": lambda f: jacrev(jacfwd(f)),
-    "forward-forward": lambda f: jacfwd(jacfwd(f)),
-    "third": lambda f: jacfwd(jacrev(jacrev(f))),
+    "reverse-reverse": _reverse_reverse,
+    "forward-reverse": _forward_reverse,
+    "reverse-forward": _reverse_forward,
+    "forward-forward": _forward_forward,
+    "third": _third_derivative,
 }
 
 
@@ -62,24 +90,46 @@ def test_position_derivatives(derivative: str, mixed: bool) -> None:
     structure = load_structure("LiH", DD_DOUBLE, 1.0)
     model = _model(mixed)
 
-    def observable(mode: str) -> Callable:
-        def evaluate(positions: Tensor) -> tuple[Tensor, Tensor]:
-            q, e = model(
-                structure.replace(positions=positions),
-                solve_mode=mode,
-                return_energy=True,
-            )
-            return q, e.sum()
+    def evaluate(positions: Tensor, mode: str) -> tuple[Tensor, Tensor]:
+        displaced_structure = structure.replace(positions=positions)
+        charges, energies = model(
+            displaced_structure, solve_mode=mode, return_energy=True
+        )
+        return charges, energies.sum()
 
-        return evaluate
+    def matrix_free_charges(positions: Tensor) -> Tensor:
+        charges, _ = evaluate(positions, "matrix-free")
+        return charges
+
+    def dense_charges(positions: Tensor) -> Tensor:
+        charges, _ = evaluate(positions, "schur")
+        return charges
+
+    def matrix_free_energy(positions: Tensor) -> Tensor:
+        _, total_energy = evaluate(positions, "matrix-free")
+        return total_energy
+
+    def dense_energy(positions: Tensor) -> Tensor:
+        _, total_energy = evaluate(positions, "schur")
+        return total_energy
 
     # Tuple-valued nested jacrev has nested output trees. Test charge and
     # scalar energy separately to keep the reference comparison explicit.
-    for index in (0, 1):
-        f = lambda p: observable("matrix-free")(p)[index]
-        reference = lambda p: observable("schur")(p)[index]
-        actual = DERIVATIVES[derivative](f)(structure.positions)
-        expected = DERIVATIVES[derivative](reference)(structure.positions)
+    observable_pairs = (
+        (matrix_free_charges, dense_charges),
+        (matrix_free_energy, dense_energy),
+    )
+    derivative_transform = DERIVATIVES[derivative]
+
+    for observable, reference_observable in observable_pairs:
+        evaluate_derivative = derivative_transform(observable)
+        evaluate_reference_derivative = derivative_transform(
+            reference_observable
+        )
+
+        actual = evaluate_derivative(structure.positions)
+        expected = evaluate_reference_derivative(structure.positions)
+
         torch.testing.assert_close(actual, expected, atol=1e-8, rtol=1e-8)
 
 
@@ -93,34 +143,58 @@ def test_parameter_and_force_derivatives(
     model = _model()
     parameter = getattr(model, param)[1:]
 
-    def observables(mode: str) -> Callable:
-        def evaluate(value: Tensor, positions: Tensor) -> tuple[Tensor, Tensor]:
-            full = torch.cat((getattr(model, param)[:1], value))
-            q, e = model.replace(**{param: full})(
-                structure.replace(positions=positions),
-                solve_mode=mode,
-                return_energy=True,
-            )
-            return q, e.sum()
+    def evaluate(
+        value: Tensor, positions: Tensor, mode: str
+    ) -> tuple[Tensor, Tensor]:
+        full_parameter = torch.cat((getattr(model, param)[:1], value))
+        parameter_model = model.replace(**{param: full_parameter})
+        displaced_structure = structure.replace(positions=positions)
+        charges, energies = parameter_model(
+            displaced_structure, solve_mode=mode, return_energy=True
+        )
+        return charges, energies.sum()
 
-        return evaluate
+    def matrix_free_observables(
+        value: Tensor, positions: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        return evaluate(value, positions, "matrix-free")
 
-    args = (parameter, structure.positions)
-    for actual, expected in zip(
-        differentiate(observables("matrix-free"), argnums=0)(*args),
-        differentiate(observables("schur"), argnums=0)(*args),
-    ):
-        torch.testing.assert_close(actual, expected, atol=1e-8, rtol=1e-8)
-    energy = lambda value, positions: observables("matrix-free")(
-        value, positions
-    )[1]
-    reference_energy = lambda value, positions: observables("schur")(
-        value, positions
-    )[1]
-    mixed = differentiate(jacrev(energy, argnums=1), argnums=0)(*args)
-    expected = differentiate(jacrev(reference_energy, argnums=1), argnums=0)(
-        *args
+    def dense_observables(
+        value: Tensor, positions: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        return evaluate(value, positions, "schur")
+
+    def matrix_free_energy(value: Tensor, positions: Tensor) -> Tensor:
+        _, total_energy = matrix_free_observables(value, positions)
+        return total_energy
+
+    def dense_energy(value: Tensor, positions: Tensor) -> Tensor:
+        _, total_energy = dense_observables(value, positions)
+        return total_energy
+
+    arguments = (parameter, structure.positions)
+    evaluate_parameter_derivative = differentiate(
+        matrix_free_observables, argnums=0
     )
+    evaluate_reference_derivative = differentiate(dense_observables, argnums=0)
+
+    parameter_derivatives = evaluate_parameter_derivative(*arguments)
+    reference_derivatives = evaluate_reference_derivative(*arguments)
+
+    for actual, expected in zip(parameter_derivatives, reference_derivatives):
+        torch.testing.assert_close(actual, expected, atol=1e-8, rtol=1e-8)
+
+    # Differentiate the position gradient with respect to parameter argument 0.
+    position_gradient = jacrev(matrix_free_energy, argnums=1)
+    mixed_derivative = differentiate(position_gradient, argnums=0)
+    reference_position_gradient = jacrev(dense_energy, argnums=1)
+    reference_mixed_derivative = differentiate(
+        reference_position_gradient, argnums=0
+    )
+
+    mixed = mixed_derivative(*arguments)
+    expected = reference_mixed_derivative(*arguments)
+
     torch.testing.assert_close(mixed, expected, atol=1e-8, rtol=1e-8)
 
 
@@ -129,23 +203,44 @@ def test_total_charge_derivatives(derivative: str) -> None:
     """The constraint retains its first, second and third implicit derivatives."""
     structure = load_structure("LiH", DD_DOUBLE, 1.0)
     model = _model()
+
     assert structure.charge is not None
-    for index in (0, 1):
 
-        def observable(charge: Tensor, mode: str) -> Tensor:
-            q, e = model(
-                structure.replace(charge=charge),
-                solve_mode=mode,
-                return_energy=True,
-            )
-            return q if index == 0 else e.sum()
+    def evaluate(total_charge: Tensor, mode: str) -> tuple[Tensor, Tensor]:
+        charged_structure = structure.replace(charge=total_charge)
+        return model(charged_structure, solve_mode=mode, return_energy=True)
 
-        actual = DERIVATIVES[derivative](
-            lambda q: observable(q, "matrix-free")
-        )(structure.charge)
-        expected = DERIVATIVES[derivative](lambda q: observable(q, "schur"))(
-            structure.charge
+    def matrix_free_charges(total_charge: Tensor) -> Tensor:
+        charges, _ = evaluate(total_charge, "matrix-free")
+        return charges
+
+    def dense_charges(total_charge: Tensor) -> Tensor:
+        charges, _ = evaluate(total_charge, "schur")
+        return charges
+
+    def matrix_free_energy(total_charge: Tensor) -> Tensor:
+        _, energies = evaluate(total_charge, "matrix-free")
+        return energies.sum()
+
+    def dense_energy(total_charge: Tensor) -> Tensor:
+        _, energies = evaluate(total_charge, "schur")
+        return energies.sum()
+
+    observable_pairs = (
+        (matrix_free_charges, dense_charges),
+        (matrix_free_energy, dense_energy),
+    )
+    derivative_transform = DERIVATIVES[derivative]
+
+    for observable, reference_observable in observable_pairs:
+        evaluate_derivative = derivative_transform(observable)
+        evaluate_reference_derivative = derivative_transform(
+            reference_observable
         )
+
+        actual = evaluate_derivative(structure.charge)
+        expected = evaluate_reference_derivative(structure.charge)
+
         torch.testing.assert_close(actual, expected, atol=1e-8, rtol=1e-8)
 
 
@@ -171,6 +266,7 @@ def test_failed_system_derivatives(
         ) -> mf.linsolve.LinearSolveResult:
             result = projected_cg(*args, **kwargs)
             converged = result.status == mf.linsolve.STATUS_CONVERGED
+
             return result._replace(
                 solution=torch.where(
                     converged.unsqueeze(-1), result.solution, torch.nan
@@ -181,6 +277,7 @@ def test_failed_system_derivatives(
         monkeypatch.setattr(
             mf.linsolve.constrained, "projected_cg", failed_iterates
         )
+
     batch = load_batch(["LiH", "SiH4"], DD_DOUBLE, [0.0, 0.0])
     lih = load_structure("LiH", DD_DOUBLE, 0.0)
     model = _model()
@@ -190,17 +287,38 @@ def test_failed_system_derivatives(
     parameter = getattr(model, param)[1:]
 
     def evaluate(
-        value: Tensor, structure: Structure, mode: str = "matrix-free"
+        value: Tensor, current_structure: Structure, mode: str = "matrix-free"
     ) -> tuple[Tensor, Tensor]:
-        full = torch.cat((getattr(model, param)[:1], value))
-        q, e = model.replace(**{param: full})(
-            structure, solve_mode=mode, return_energy=True
+        full_parameter = torch.cat((getattr(model, param)[:1], value))
+        parameter_model = model.replace(**{param: full_parameter})
+        charges, energies = parameter_model(
+            current_structure, solve_mode=mode, return_energy=True
         )
-        return q, e.sum(-1)
+        return charges, energies.sum(-1)
+
+    def evaluate_structure(
+        current_structure: Structure,
+    ) -> tuple[Tensor, Tensor]:
+        return evaluate(parameter, current_structure)
+
+    def evaluate_batch(value: Tensor) -> tuple[Tensor, Tensor]:
+        def evaluate_with_parameter(
+            current_structure: Structure,
+        ) -> tuple[Tensor, Tensor]:
+            return evaluate(value, current_structure)
+
+        evaluate_structures = vmap(evaluate_with_parameter)
+        return evaluate_structures(batch)
+
+    def dense_reference(value: Tensor) -> tuple[Tensor, Tensor]:
+        return evaluate(value, lih, "schur")
 
     with pytest.raises(ConvergenceError):
         evaluate(parameter, batch)
-    primal = vmap(lambda s: evaluate(parameter, s))(batch)
+
+    evaluate_structures = vmap(evaluate_structure)
+    primal = evaluate_structures(batch)
+
     assert torch.isfinite(primal[0][0]).all()
     assert torch.isfinite(primal[1][0])
     assert torch.isnan(primal[0][1]).all()
@@ -208,21 +326,22 @@ def test_failed_system_derivatives(
 
     with no_vmap_fallback():
         if shared:
-            result = differentiate(
-                lambda value: vmap(lambda s: evaluate(value, s))(batch)
-            )(parameter)
+            evaluate_batch_derivative = differentiate(evaluate_batch)
+            result = evaluate_batch_derivative(parameter)
         else:
-            result = vmap(
-                differentiate(evaluate, argnums=0), in_dims=(None, 0)
-            )(parameter, batch)
-    expected = differentiate(lambda value: evaluate(value, lih, "schur"))(
-        parameter
-    )
+            system_derivative = differentiate(evaluate, argnums=0)
+            evaluate_derivatives = vmap(system_derivative, in_dims=(None, 0))
+            result = evaluate_derivatives(parameter, batch)
+
+    evaluate_reference_derivative = differentiate(dense_reference)
+    expected = evaluate_reference_derivative(parameter)
+
     torch.testing.assert_close(
         result[0][0, :2], expected[0], atol=1e-9, rtol=1e-9
     )
     torch.testing.assert_close(result[1][0], expected[1], atol=1e-9, rtol=1e-9)
     assert torch.equal(result[0][0, 2:], torch.zeros_like(result[0][0, 2:]))
+
     # H and Si are entries 0 and 13 after excluding the padding entry.
     assert torch.isnan(result[0][1, :, [0, 13]]).all()
     assert torch.isnan(result[1][1, [0, 13]]).all()
@@ -236,8 +355,9 @@ def test_finite_differences(check: Callable) -> None:
     model = _model()
     positions = structure.positions.clone().requires_grad_(True)
 
-    def charges(p: Tensor) -> Tensor:
-        return model(structure.replace(positions=p), solve_mode="matrix-free")
+    def charges(positions: Tensor) -> Tensor:
+        displaced_structure = structure.replace(positions=positions)
+        return model(displaced_structure, solve_mode="matrix-free")
 
     assert check(charges, (positions,))
 
@@ -257,15 +377,21 @@ def test_native_backward(dtype: torch.dtype) -> None:
     model = model.replace(**dict(zip(names, parameters)))
 
     def objective(mode: str) -> Tensor:
-        q, e = model(structure, return_energy=True, solve_mode=mode)
+        charges, energies = model(
+            structure, return_energy=True, solve_mode=mode
+        )
+
         # The charge term ensures a nonzero adjoint, independently of the
         # variational energy's cancellation of the charge response.
-        return e.sum() + 0.3 * q.square().sum()
+        return energies.sum() + 0.3 * charges.square().sum()
 
-    actual = torch.autograd.grad(
-        objective("matrix-free"), (positions, *parameters)
-    )
-    expected = torch.autograd.grad(objective("schur"), (positions, *parameters))
+    differentiable_inputs = (positions, *parameters)
+    matrix_free_objective = objective("matrix-free")
+    actual = torch.autograd.grad(matrix_free_objective, differentiable_inputs)
+
+    dense_objective = objective("schur")
+    expected = torch.autograd.grad(dense_objective, differentiable_inputs)
+
     tolerance = 2e-4 if dtype == torch.float32 else 1e-8
     for gradient, reference in zip(actual, expected):
         torch.testing.assert_close(
@@ -282,16 +408,28 @@ def test_parameter_hessian(param: str) -> None:
     parameter = getattr(model, param)
 
     def energy(value: Tensor, mode: str) -> Tensor:
-        full = parameter.index_copy(0, indices, value)
-        return model.replace(**{param: full})(
+        full_parameter = parameter.index_copy(0, indices, value)
+        parameter_model = model.replace(**{param: full_parameter})
+        _, energies = parameter_model(
             structure, solve_mode=mode, return_energy=True
-        )[1].sum()
+        )
+        return energies.sum()
 
-    selected = parameter[indices]
-    actual = jacfwd(jacrev(lambda value: energy(value, "matrix-free")))(
-        selected
-    )
-    expected = jacrev(jacrev(lambda value: energy(value, "schur")))(selected)
+    def matrix_free_energy(value: Tensor) -> Tensor:
+        return energy(value, "matrix-free")
+
+    def dense_energy(value: Tensor) -> Tensor:
+        return energy(value, "schur")
+
+    selected_parameters = parameter[indices]
+    matrix_free_gradient = jacrev(matrix_free_energy)
+    matrix_free_hessian = jacfwd(matrix_free_gradient)
+    dense_gradient = jacrev(dense_energy)
+    dense_hessian = jacrev(dense_gradient)
+
+    actual = matrix_free_hessian(selected_parameters)
+    expected = dense_hessian(selected_parameters)
+
     torch.testing.assert_close(actual, expected, atol=1e-8, rtol=1e-8)
 
 
@@ -308,6 +446,7 @@ def test_parameter_hessian(param: str) -> None:
 def test_failed_system_higher_derivatives(derivative: str) -> None:
     """Per-system higher derivatives remain invalid after a curvature failure."""
     batch = load_batch(["LiH", "SiH4"], DD_DOUBLE, [0.0, 0.0])
+    lih = load_structure("LiH", DD_DOUBLE, 0.0)
     model = _model()
     eta = model.eta.clone()
     eta[14] = -10.0
@@ -316,36 +455,42 @@ def test_failed_system_higher_derivatives(derivative: str) -> None:
     direction[1] = 1.0
 
     def energy(
-        offset: Tensor, structure: Structure, mode: str = "matrix-free"
+        offset: Tensor, current_structure: Structure, mode: str = "matrix-free"
     ) -> Tensor:
-        return model.replace(chi=model.chi + offset * direction)(
-            structure, solve_mode=mode, return_energy=True
-        )[1].sum()
+        parameter_model = model.replace(chi=model.chi + offset * direction)
+        _, energies = parameter_model(
+            current_structure, solve_mode=mode, return_energy=True
+        )
+        return energies.sum()
+
+    def dense_energy(value: Tensor) -> Tensor:
+        return energy(value, lih, "schur")
 
     offset = torch.zeros((), **DD_DOUBLE)
+
     with no_vmap_fallback():
-        actual = vmap(DERIVATIVES[derivative](energy), in_dims=(None, 0))(
-            offset, batch
-        )
-    lih = load_structure("LiH", DD_DOUBLE, 0.0)
-    expected = DERIVATIVES[derivative](
-        lambda value: energy(value, lih, "schur")
-    )(offset)
+        energy_derivative = DERIVATIVES[derivative](energy)
+        evaluate_derivatives = vmap(energy_derivative, in_dims=(None, 0))
+        actual = evaluate_derivatives(offset, batch)
+
+    evaluate_reference_derivative = DERIVATIVES[derivative](dense_energy)
+    expected = evaluate_reference_derivative(offset)
+
     torch.testing.assert_close(actual[0], expected, atol=1e-8, rtol=1e-8)
     assert torch.isnan(actual[1]).all()
 
 
 def test_saved_graph_is_tiled() -> None:
     """The first-derivative graph retains vectors and tiles, not an NxN matrix."""
-    n = 64
-    positions = torch.zeros(n, 3, **DD_DOUBLE)
-    positions[:, 0] = 3 * torch.arange(n, device=DEVICE)
+    natoms = 64
+    positions = torch.zeros(natoms, 3, **DD_DOUBLE)
+    positions[:, 0] = 3 * torch.arange(natoms, device=DEVICE)
     positions.requires_grad_(True)
     structure = Structure(
-        numbers=torch.ones(n, dtype=torch.long, device=DEVICE),
+        numbers=torch.ones(natoms, dtype=torch.long, device=DEVICE),
         positions=positions,
     )
-    cn = torch.linspace(0.0, 2.0, n, **DD_DOUBLE)
+    coordination_numbers = torch.linspace(0.0, 2.0, natoms, **DD_DOUBLE)
     model = _model(False).replace(
         matrix_free=eeq.MatrixFreeOptions(
             tile=4, coarse_memory=0, mixed_precision=False, fused=False
@@ -359,14 +504,23 @@ def test_saved_graph_is_tiled() -> None:
 
     with torch.autograd.graph.saved_tensors_hooks(pack, lambda tensor: tensor):
         _, energy = model.solve(
-            structure, cn, solve_mode="matrix-free", return_energy=True
+            structure,
+            coordination_numbers,
+            solve_mode="matrix-free",
+            return_energy=True,
         )
+
     assert saved_shapes
-    assert all(shape != (n, n) for shape in saved_shapes)
+    assert all(shape != (natoms, natoms) for shape in saved_shapes)
     assert (
-        max(torch.tensor(shape).prod().item() for shape in saved_shapes) < n * n
+        max(torch.tensor(shape).prod().item() for shape in saved_shapes)
+        < natoms * natoms
     )
+
     gradient = torch.autograd.grad(energy.sum(), positions)[0]
-    reference_energy = model.solve(structure, cn, return_energy=True)[1]
+    reference_energy = model.solve(
+        structure, coordination_numbers, return_energy=True
+    )[1]
     reference = torch.autograd.grad(reference_energy.sum(), positions)[0]
+
     torch.testing.assert_close(gradient, reference, atol=1e-8, rtol=1e-8)

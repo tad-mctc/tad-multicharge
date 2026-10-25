@@ -65,14 +65,26 @@ def test_charges_and_energies(
             tile=2, fused=False, mixed_precision=mixed
         )
     )
-    q, e = model(structure, solve_mode="matrix-free", return_energy=True)
+
+    charges, energies = model(
+        structure, solve_mode="matrix-free", return_energy=True
+    )
+
     tolerance = 2e-5 if dtype == torch.float32 else 1e-9
     for mode in ("schur", "cg"):
-        qref, eref = model(structure, solve_mode=mode, return_energy=True)
-        torch.testing.assert_close(q, qref, atol=tolerance, rtol=tolerance)
-        torch.testing.assert_close(e, eref, atol=tolerance, rtol=tolerance)
+        reference_charges, reference_energies = model(
+            structure, solve_mode=mode, return_energy=True
+        )
+
+        torch.testing.assert_close(
+            charges, reference_charges, atol=tolerance, rtol=tolerance
+        )
+        torch.testing.assert_close(
+            energies, reference_energies, atol=tolerance, rtol=tolerance
+        )
+
     torch.testing.assert_close(
-        q.sum(), q.new_tensor(charge), atol=tolerance, rtol=0
+        charges.sum(), charges.new_tensor(charge), atol=tolerance, rtol=0
     )
 
 
@@ -80,6 +92,7 @@ def test_no_dense_coulomb(monkeypatch: pytest.MonkeyPatch) -> None:
     """Both charges and energies bypass every dense Coulomb constructor."""
     structure = load_structure("ZnOOH-", DD_DOUBLE, -1.0)
     model = _model()
+
     reference = model(structure, return_energy=True)
 
     def forbidden(*args: Any, **kwargs: Any) -> Tensor:
@@ -87,12 +100,15 @@ def test_no_dense_coulomb(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(eeq, "_coulomb_matrix_0d", forbidden)
     monkeypatch.setattr(eeq, "coulomb_matrix_3d", forbidden)
+
     result = model(structure, return_energy=True, solve_mode="matrix-free")
+
     for actual, expected in zip(result, reference):
         torch.testing.assert_close(actual, expected, atol=1e-9, rtol=1e-9)
-    torch.testing.assert_close(
-        model(structure, solve_mode="matrix-free"), reference[0]
-    )
+
+    charges_only = model(structure, solve_mode="matrix-free")
+
+    torch.testing.assert_close(charges_only, reference[0])
 
 
 def test_padding_and_ghosts() -> None:
@@ -116,15 +132,23 @@ def test_padding_and_ghosts() -> None:
         charge=structure.charge,
     )
     model = _model()
-    q, e = model(ghost, solve_mode="matrix-free", return_energy=True)
-    qref, eref = model(structure, return_energy=True)
-    torch.testing.assert_close(q[[0, 2]], qref)
-    torch.testing.assert_close(e[[0, 2]], eref)
-    assert q[1] == 0 and e[1] == 0
+
+    charges, energies = model(
+        ghost, solve_mode="matrix-free", return_energy=True
+    )
+    reference_charges, reference_energies = model(structure, return_energy=True)
+
+    torch.testing.assert_close(charges[[0, 2]], reference_charges)
+    torch.testing.assert_close(energies[[0, 2]], reference_energies)
+    assert charges[1] == 0 and energies[1] == 0
+
     batch = load_batch(["LiH", "ZnOOH-"], DD_DOUBLE, [0.0, -1.0])
-    q, e = model(batch, solve_mode="matrix-free", return_energy=True)
-    assert torch.equal(q[0, 2:], torch.zeros_like(q[0, 2:]))
-    assert torch.equal(e[0, 2:], torch.zeros_like(e[0, 2:]))
+    charges, energies = model(
+        batch, solve_mode="matrix-free", return_energy=True
+    )
+
+    assert torch.equal(charges[0, 2:], torch.zeros_like(charges[0, 2:]))
+    assert torch.equal(energies[0, 2:], torch.zeros_like(energies[0, 2:]))
 
 
 @pytest.mark.parametrize("budget", [0, 4096, 65536])
@@ -132,76 +156,110 @@ def test_coarse_memory_budget(
     budget: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Balancing setup bounds its coarse dimension before allocating AZ."""
-    n = 32
-    positions = torch.zeros(n, 3, **DD_DOUBLE)
-    positions[:, 0] = 3 * torch.arange(n, device=DEVICE)
-    numbers = torch.ones(n, dtype=torch.long, device=DEVICE)
+    natoms = 32
+    positions = torch.zeros(natoms, 3, **DD_DOUBLE)
+    positions[:, 0] = 3 * torch.arange(natoms, device=DEVICE)
+    numbers = torch.ones(natoms, dtype=torch.long, device=DEVICE)
     structure = Structure(numbers=numbers, positions=positions)
     model = _model(coarse_memory=budget, cell_size=1.0)
-    sums = mf.pair_cell_sums
-    sizes = []
+    original_cell_sums = mf.pair_cell_sums
+    cell_counts = []
 
     def bounded_sums(*args: Any, **kwargs: Any) -> Tensor:
-        k = args[3]
-        sizes.append(k)
+        ncells = args[3]
+        cell_counts.append(ncells)
+
         # The implementation reserves eight float64 NxK buffers for
         # assembly and coarse workspaces; the caller's budget bounds K.
-        assert k <= n
-        assert 8 * 8 * n * k <= budget
-        return sums(*args, **kwargs)
+        assert ncells <= natoms
+        assert 8 * 8 * natoms * ncells <= budget
+        return original_cell_sums(*args, **kwargs)
 
     monkeypatch.setattr(mf, "pair_cell_sums", bounded_sums)
-    q = model(structure, solve_mode="matrix-free")
-    torch.testing.assert_close(q, torch.zeros_like(q), atol=1e-10, rtol=0)
-    assert bool(sizes) == (budget > 0)
+
+    charges = model(structure, solve_mode="matrix-free")
+
+    torch.testing.assert_close(
+        charges, torch.zeros_like(charges), atol=1e-10, rtol=0
+    )
+    assert bool(cell_counts) == (budget > 0)
 
 
 def test_preconditioner_rebuilt() -> None:
     """Moved geometries rebuild the preconditioner without changing stored state."""
     structure = load_structure("ZnOOH-", DD_DOUBLE, -1.0)
     model = _model(cell_size=1.0)
-    first = model(structure, solve_mode="matrix-free")
-    moved = structure.replace(positions=structure.positions * 1.2)
+
+    original_charges = model(structure, solve_mode="matrix-free")
+
+    moved_structure = structure.replace(positions=structure.positions * 1.2)
+    moved_charges = model(moved_structure, solve_mode="matrix-free")
+    reference_charges = model(moved_structure)
+
     torch.testing.assert_close(
-        model(moved, solve_mode="matrix-free"),
-        model(moved),
-        atol=1e-9,
-        rtol=1e-9,
+        moved_charges, reference_charges, atol=1e-9, rtol=1e-9
     )
-    torch.testing.assert_close(
-        model(structure, solve_mode="matrix-free"), first
-    )
+
+    restored_charges = model(structure, solve_mode="matrix-free")
+
+    torch.testing.assert_close(restored_charges, original_charges)
 
 
 def test_vmap_structures_models_and_charge() -> None:
     """Structure, model-tree and charge batching match independent dense solves."""
     model = _model()
     batch = load_batch(["LiH", "ZnOOH-"], DD_DOUBLE, [0.0, -1.0])
+
+    def evaluate_structure(current_structure: Structure) -> Tensor:
+        return model(current_structure, solve_mode="matrix-free")
+
     with no_vmap_fallback():
-        q = vmap(lambda s: model(s, solve_mode="matrix-free"))(batch)
-    torch.testing.assert_close(q, model(batch), atol=1e-9, rtol=1e-9)
+        evaluate_structures = vmap(evaluate_structure)
+        charges_from_structures = evaluate_structures(batch)
+
+    reference_batch_charges = model(batch)
+
+    torch.testing.assert_close(
+        charges_from_structures, reference_batch_charges, atol=1e-9, rtol=1e-9
+    )
+
     structure = load_structure("SiH4", DD_DOUBLE, 0.0)
     models = [model, model.replace(chi=model.chi * 1.1)]
+
+    def evaluate_model(current_model: eeq.EEQModel) -> Tensor:
+        return current_model(structure, solve_mode="matrix-free")
+
+    def evaluate_total_charge(total_charge: Tensor) -> Tensor:
+        charged_structure = structure.replace(charge=total_charge)
+        return model(charged_structure, solve_mode="matrix-free")
+
+    batched_models = stack(models)
+    total_charges = torch.tensor([-1.0, 0.0, 1.0], **DD_DOUBLE)
+
     with no_vmap_fallback():
-        q = vmap(lambda m: m(structure, solve_mode="matrix-free"))(
-            stack(models)
-        )
-        totals = torch.tensor([-1.0, 0.0, 1.0], **DD_DOUBLE)
-        charged = vmap(
-            lambda total: model(
-                structure.replace(charge=total), solve_mode="matrix-free"
-            )
-        )(totals)
-    torch.testing.assert_close(
-        q, torch.stack([m(structure) for m in models]), atol=1e-9, rtol=1e-9
+        evaluate_models = vmap(evaluate_model)
+        charges_from_models = evaluate_models(batched_models)
+
+        evaluate_charges = vmap(evaluate_total_charge)
+        charges_from_totals = evaluate_charges(total_charges)
+
+    reference_model_charges = torch.stack(
+        [current_model(structure) for current_model in models]
     )
-    torch.testing.assert_close(charged.sum(-1), totals, atol=1e-12, rtol=0)
+
+    torch.testing.assert_close(
+        charges_from_models, reference_model_charges, atol=1e-9, rtol=1e-9
+    )
+    torch.testing.assert_close(
+        charges_from_totals.sum(-1), total_charges, atol=1e-12, rtol=0
+    )
 
 
 def test_iteration_limit() -> None:
     """A deliberately incomplete solve raises with its original diagnostics."""
     structure = load_structure("ZnOOH-", DD_DOUBLE, -1.0)
     model = _model(coarse_memory=0, mixed_precision=False, maxiter=1)
+
     with pytest.raises(ConvergenceError, match="matrix-free"):
         model(structure, solve_mode="matrix-free")
 
@@ -209,6 +267,7 @@ def test_iteration_limit() -> None:
 def test_periodic_rejected() -> None:
     """The molecular backend explicitly rejects periodic Ewald inputs."""
     structure = load_periodic("CO2+", DD_DOUBLE)
+
     with pytest.raises(NotImplementedError, match="nonperiodic"):
         _model().solve(
             structure,
@@ -236,7 +295,9 @@ def test_invalid_options(options: dict[str, Any]) -> None:
 def test_options_immutable() -> None:
     """Solver options remain hashable static context in the model pytree."""
     options = eeq.MatrixFreeOptions()
+
     assert hash(options) == hash(eeq.MatrixFreeOptions())
+
     with pytest.raises(FrozenInstanceError):
         options.tile = 2  # type: ignore[misc]
 
@@ -244,12 +305,16 @@ def test_options_immutable() -> None:
 def test_convenience_functions() -> None:
     """All charge/energy convenience APIs forward the matrix-free mode."""
     structure = load_structure("LiH", DD_DOUBLE, 0.0)
-    q, e = eeq.get_eeq(structure, solve_mode="matrix-free", return_energy=True)
+
+    charges, energies = eeq.get_eeq(
+        structure, solve_mode="matrix-free", return_energy=True
+    )
+
     torch.testing.assert_close(
-        eeq.get_charges(structure, solve_mode="matrix-free"), q
+        eeq.get_charges(structure, solve_mode="matrix-free"), charges
     )
     torch.testing.assert_close(
-        eeq.get_energy(structure, solve_mode="matrix-free"), e
+        eeq.get_energy(structure, solve_mode="matrix-free"), energies
     )
 
 
@@ -266,15 +331,22 @@ def test_independent_charge_acceptance(
         *args: Any, **kwargs: Any
     ) -> linsolve.ConstrainedSolveResult:
         result = constrained_solve(*args, **kwargs)
-        q = result.solution + 1e-6
-        residual = (q.sum(-1) - args[3].squeeze(-1)).abs().detach()
-        return result._replace(solution=q, constraint_residual=residual)
+        charges = result.solution + 1e-6
+        residual = (charges.sum(-1) - args[3].squeeze(-1)).abs().detach()
+
+        return result._replace(solution=charges, constraint_residual=residual)
 
     monkeypatch.setattr(linsolve, "constrained_solve", corrupted_constraint)
+
     if vectorized:
-        charges = vmap(lambda s: model(s, solve_mode="matrix-free"))(
-            load_batch(["LiH", "SiH4"], DD_DOUBLE)
-        )
+        batch = load_batch(["LiH", "SiH4"], DD_DOUBLE)
+
+        def evaluate_structure(current_structure: Structure) -> Tensor:
+            return model(current_structure, solve_mode="matrix-free")
+
+        evaluate_structures = vmap(evaluate_structure)
+        charges = evaluate_structures(batch)
+
         assert torch.isnan(charges).all()
     else:
         with pytest.raises(ConvergenceError, match="total charge"):
@@ -290,16 +362,18 @@ def test_empty_padded_system(charge: float) -> None:
         charge=torch.tensor(charge, **DD_DOUBLE),
     )
     model = _model()
+
     if charge != 0:
         with pytest.raises(ConvergenceError):
             model.solve(
                 structure, torch.zeros(4, **DD_DOUBLE), solve_mode="matrix-free"
             )
     else:
-        q = model.solve(
+        charges = model.solve(
             structure, torch.zeros(4, **DD_DOUBLE), solve_mode="matrix-free"
         )
-        assert torch.equal(q, torch.zeros_like(q))
+
+        assert torch.equal(charges, torch.zeros_like(charges))
 
 
 def test_coarse_factorization_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -311,12 +385,11 @@ def test_coarse_factorization_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(linsolve, "balancing", failed_factorization)
     model = _model()
-    torch.testing.assert_close(
-        model(structure, solve_mode="matrix-free"),
-        model(structure),
-        atol=1e-9,
-        rtol=1e-9,
-    )
+
+    charges = model(structure, solve_mode="matrix-free")
+    reference_charges = model(structure)
+
+    torch.testing.assert_close(charges, reference_charges, atol=1e-9, rtol=1e-9)
 
 
 @requires_compile
@@ -333,5 +406,6 @@ def test_compilation_rejected() -> None:
         )
 
     compiled = torch.compile(evaluate, backend="eager")
+
     with pytest.raises(RuntimeError, match="matrix-free.*torch.compile"):
         compiled(structure.positions)

@@ -117,6 +117,7 @@ class EEQModel(ChargeModel):
     # A factory, not `default=cn_eeq`: `torch.compile` cannot trace a `Node`
     # as a plain field default when the model is built in compiled code.
     cn: CNModel = child(default_factory=lambda: cn_eeq)
+
     # Resolve default options only when this backend is used. Keeping None
     # here preserves construction of dense models inside torch.compile.
     matrix_free: MatrixFreeOptions | None = context(default=None)

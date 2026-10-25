@@ -88,16 +88,23 @@ class MatrixFreeOptions:
 
 
 def _kernel(
-    distance: Tensor, pi: tuple[Tensor, ...], pj: tuple[Tensor, ...]
+    distance: Tensor,
+    params_i: tuple[Tensor, ...],
+    params_j: tuple[Tensor, ...],
 ) -> Tensor:
-    """Off-diagonal Gaussian interaction; padding is excluded by the caller."""
-    gamma = torch.rsqrt(pi[0].square() + pj[0].square())
+    """Evaluate the off-diagonal Gaussian Coulomb interaction."""
+    (radius_i,) = params_i
+    (radius_j,) = params_j
+
+    gamma = torch.rsqrt(radius_i.square() + radius_j.square())
+
     return torch.erf(distance * gamma) / distance
 
 
 def _diagonal(rad: Tensor, eta: Tensor, real: Tensor) -> Tensor:
     """Unit padding diagonal and finite dummy radii, including in backward."""
     radius = torch.where(real, rad, 1.0)
+
     return torch.where(real, eta + math.sqrt(2.0 / math.pi) / radius, 1.0)
 
 
@@ -111,22 +118,28 @@ def _matvec(
     options: MatrixFreeOptions,
     dtype: torch.dtype | None = None,
 ) -> Tensor:
+    """Apply the Gaussian pair interactions and diagonal to the charges."""
+
     # Failed iterates can be nonfinite, including the primal saved by
     # implicit AD. Keep zero adjoints of those systems from introducing
     # 0 * NaN into shared parameter pullbacks. The caller still rejects
     # the original nonfinite solution; every finite product is unchanged.
-    q = torch.nan_to_num(q, nan=0.0, posinf=0.0, neginf=0.0)
-    pairs = pair_product(
+    finite_charges = torch.nan_to_num(q, nan=0.0, posinf=0.0, neginf=0.0)
+    pair_radii = torch.where(real, rad, 1.0)
+
+    pair_contributions = pair_product(
         _kernel,
         positions,
-        q,
-        torch.where(real, rad, 1.0),
+        finite_charges,
+        pair_radii,
         mask=real,
         tile=options.tile,
         dtype=dtype,
         fused=options.fused and positions.is_cuda,
     )
-    return _diagonal(rad, eta, real) * q + pairs
+    diagonal = _diagonal(rad, eta, real)
+
+    return diagonal * finite_charges + pair_contributions
 
 
 def _jacobi(
@@ -134,6 +147,7 @@ def _jacobi(
 ) -> Tensor:
     """Evaluate from explicit solve arguments, including under nested AD."""
     diagonal = _diagonal(rad, eta, real).detach()
+
     # Positive preconditioning lets projected CG report indefinite curvature.
     return r / diagonal.abs().clamp_min(torch.finfo(r.dtype).eps)
 
@@ -147,50 +161,61 @@ def _preconditioner(
 ) -> Callable[..., Tensor]:
     diagonal = _diagonal(rad, eta, real).detach()
 
-    n = positions.shape[-2]
-    batch = math.prod(positions.shape[:-2])
-    dtype = torch.float32 if options.mixed_precision else positions.dtype
+    natoms = positions.shape[-2]
+    batch_size = math.prod(positions.shape[:-2])
+    product_dtype = (
+        torch.float32 if options.mixed_precision else positions.dtype
+    )
+
     # AZ may be float32 while its coarse Cholesky is float64. Reserve in
     # the larger dtype so the budget covers both assembly and factorization.
-    itemsize = max(
-        torch.empty((), dtype=dtype).element_size(), positions.element_size()
+    coarse_itemsize = max(
+        torch.empty((), dtype=product_dtype).element_size(),
+        positions.element_size(),
     )
+
     # K <= N bounds K^2 by N*K. Eight N*K buffers conservatively account
     # for AZ assembly, its copies, and the coarse matrices/factorization.
     max_cells = min(
-        n, options.coarse_memory // (8 * itemsize * batch * max(n, 1))
+        natoms,
+        options.coarse_memory
+        // (8 * coarse_itemsize * batch_size * max(natoms, 1)),
     )
+
     if max_cells < 1 or any(
         is_functorch_tensor(t) for t in (positions, rad, eta, real)
     ):
         return _jacobi
 
     with torch.no_grad():
-        cells, size = linsolve.cell_index(
+        cells, ncells = linsolve.cell_index(
             positions, options.cell_size, mask=real, max_cells=max_cells
         )
-        if size == 0:
+        if ncells == 0:
             return _jacobi
-        products = pair_cell_sums(
+
+        cell_products = pair_cell_sums(
             _kernel,
             positions,
             cells,
-            size,
+            ncells,
             torch.where(real, rad, 1.0),
             mask=real,
             tile=options.tile,
-            dtype=dtype,
+            dtype=product_dtype,
         )
+
         # Padding is outside all cells; its unit diagonal must not enter AZ.
-        products = products.scatter_add(
+        cell_products = cell_products.scatter_add(
             -1,
             cells.clamp_min(0).unsqueeze(-1),
-            torch.where(real, diagonal, 0.0).to(dtype).unsqueeze(-1),
+            torch.where(real, diagonal, 0.0).to(product_dtype).unsqueeze(-1),
         )
+
         # A failed coarse factorization should not obscure projected-CG
         # failure handling for an unphysical model. Jacobi is always valid.
         try:
-            return linsolve.balancing(diagonal, cells, products)
+            return linsolve.balancing(diagonal, cells, cell_products)
         except torch.linalg.LinAlgError:
             return _jacobi
 
@@ -211,15 +236,17 @@ def solve(
     """Solve the molecular KKT equations without constructing a dense matrix."""
     if options is None:
         options = MatrixFreeOptions()
+
     real = constraint.bool()
-    exact = partial(_matvec, options=options)
-    fast = (
+    exact_operator = partial(_matvec, options=options)
+    fast_operator = (
         partial(_matvec, options=options, dtype=torch.float32)
         if options.mixed_precision and positions.dtype == torch.float64
         else None
     )
+
     result = linsolve.constrained_solve(
-        exact,
+        exact_operator,
         cc,
         constraint.unsqueeze(-2),
         total_charge,
@@ -228,37 +255,58 @@ def solve(
         eta,
         real,
         preconditioner=_preconditioner(positions, rad, eta, real, options),
-        fast_matvec=fast,
+        fast_matvec=fast_operator,
         fallback=options.fallback,
         maxiter=options.maxiter,
         rtol=rtol,
         atol=atol,
     )
+
     # Do not feed convergence-masked NaNs into the quadratic energy.
     # Status remains separate until both final physical outputs are ready.
     if not is_vmapped(result.status):
         linsolve.require_convergence(result, name="EEQ matrix-free solve")
-    finite = torch.isfinite(result.solution).all(dim=-1)
-    q = torch.nan_to_num(result.solution, nan=0.0, posinf=0.0, neginf=0.0)
-    rounding = 10 * torch.finfo(q.dtype).eps
+
+    # Keep the original finite-solution check separate from the finite
+    # charges used to evaluate physical quantities before output masking.
+    finite_solution = torch.isfinite(result.solution).all(dim=-1)
+    charges = torch.nan_to_num(result.solution, nan=0.0, posinf=0.0, neginf=0.0)
+    roundoff_factor = 10 * torch.finfo(charges.dtype).eps
+
+    # Charge conservation is independent of the solver's KKT status.
     with torch.no_grad():
         charge_scale = (
-            (constraint * q).abs().sum(-1) + total_charge.squeeze(-1).abs()
+            (constraint * charges).abs().sum(-1)
+            + total_charge.squeeze(-1).abs()
         ).clamp_min(1.0)
         charge_ok = (
-            finite
+            finite_solution
             & torch.isfinite(result.constraint_residual)
-            & (result.constraint_residual <= atol + rounding * charge_scale)
+            & (
+                result.constraint_residual
+                <= atol + roundoff_factor * charge_scale
+            )
         )
+
     if not is_vmapped(charge_ok) and not bool(charge_ok.all()):
         raise ConvergenceError("EEQ matrix-free solve violates total charge.")
-    accepted = (
-        (result.status == linsolve.STATUS_CONVERGED) & charge_ok
-    ).unsqueeze(-1)
+
+    # Both solver convergence and physical charge conservation are required.
+    solver_converged = result.status == linsolve.STATUS_CONVERGED
+    accepted_systems = solver_converged & charge_ok
+    acceptance_mask = accepted_systems.unsqueeze(-1)
+
     if not return_energy:
-        return linsolve.mask_converged(q, accepted)
-    e = q * (0.5 * exact(q, positions, rad, eta, real) - cc)
-    return (
-        linsolve.mask_converged(q, accepted),
-        linsolve.mask_converged(e, accepted),
+        return linsolve.mask_converged(charges, acceptance_mask)
+
+    # Evaluate the quadratic energy before either output receives NaNs.
+    unmasked_energies = charges * (
+        0.5 * exact_operator(charges, positions, rad, eta, real) - cc
     )
+
+    masked_charges = linsolve.mask_converged(charges, acceptance_mask)
+    masked_energies = linsolve.mask_converged(
+        unmasked_energies, acceptance_mask
+    )
+
+    return masked_charges, masked_energies
