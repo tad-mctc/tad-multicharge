@@ -66,9 +66,12 @@ def test_auxiliary_failure_with_passing_reconstruction(
         matvec: Callable, rhs: Tensor, coulomb: Tensor, **options: Any
     ) -> storch.linsolve.LinearSolveResult:
         result = cg(matvec, rhs, coulomb, **options)
+
+        # Keep one status per RHS for explicit solver batches and mapped
+        # systems promoted by tad-mctc.
         return result._replace(
             status=torch.where(
-                coulomb[0, 0] > 1,
+                coulomb[..., 0, 0].unsqueeze(-1) > 1,
                 storch.linsolve.STATUS_NOT_CONVERGED,
                 result.status,
             ),
