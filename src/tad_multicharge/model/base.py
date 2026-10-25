@@ -42,7 +42,7 @@ from tad_mctc.typing import Tensor
 __all__ = ["ChargeModel", "SolveMode"]
 
 
-SolveMode = Literal["schur", "linear", "cg"]
+SolveMode = Literal["schur", "linear", "cg", "matrix-free"]
 """Solution method of the linear system, see :meth:`ChargeModel.solve`."""
 
 _PARAMETERS = ("chi", "kcn", "eta", "rad")

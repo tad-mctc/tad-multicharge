@@ -83,3 +83,77 @@ measured separately.
 
 .. automodule:: tad_multicharge.model.eeq
    :members:
+
+Matrix-free molecular backend
+-----------------------------
+
+``solve_mode="matrix-free"`` applies the same Gaussian Coulomb operator in
+row tiles, including the diagonal hardness, and solves the constrained
+KKT equations with projected CG. It bypasses the dense Coulomb matrix.
+The total molecular charge is an explicit constraint, and positions,
+radii and hardnesses are explicit differentiable operator arguments.
+
+.. code-block:: python
+
+   from tad_multicharge import eeq
+
+   model = eeq.EEQModel.param2019(dtype=structure.positions.dtype,
+                                device=structure.positions.device)
+   model = model.replace(matrix_free=eeq.MatrixFreeOptions(
+       coarse_memory=64 * 1024 * 1024,
+       mixed_precision=True,
+   ))
+   charges, atomic_energies = model(
+       structure, solve_mode="matrix-free", return_energy=True,
+   )
+
+``MatrixFreeOptions`` is immutable model context, so the physical parameter
+tree retains its usual ``vmap``, ``jacrev`` and ``jacfwd`` behavior. Solver
+choice also works through the convenience functions. Molecular and padded
+batches are supported. Periodic inputs are rejected explicitly: their
+Ewald operator needs a separate matrix-free implementation. The dense
+periodic modes and the default ``"schur"`` are unchanged.
+
+Memory and precision
+~~~~~~~~~~~~~~~~~~~~
+
+The default coarse-space budget is 64 MiB for the whole batch. Before
+constructing the balancing preconditioner, the number of cells is bounded
+by this budget, the atom count and the larger of the product and factorization
+dtypes. The bound reserves
+eight ``N*K`` buffers for cell-product assembly and coarse workspaces,
+with ``K <= N``. Cells enlarge until they fit. This budget excludes pair
+tiles, inputs, outputs and autograd graphs; it is not a process-wide memory
+limit. Zero disables balancing and uses Jacobi. Geometry-dependent setup
+is rebuilt per call, avoiding stale preconditioners after geometry or
+parameter changes. Under ``torch.func`` transforms, Jacobi avoids the
+data-dependent cell construction. A failed coarse Cholesky factorization
+also falls back to positive Jacobi; the physical convergence checks still
+apply.
+
+With float64 inputs, mixed precision uses float32 pair products for the
+inner iterations and refines against the float64 operator at the same
+``1e-12`` relative and ``1e-14`` absolute tolerances as dense CG. This also
+applies to the implicit derivative solves. An unsuccessful refinement
+retries with the exact operator by default; ``fallback=False`` disables
+that retry. Float32 inputs keep their original precision and tad-mctc's
+roundoff tolerance floor. ``maxiter`` bounds each projected solve.
+
+The solver checks the true residual of the bordered system and independently
+checks charge conservation. Eager failure raises ``ConvergenceError``;
+under transforms, rejected charges, energies and their active derivatives
+are NaN. Failure masking happens after energy evaluation, and nonfinite
+failed iterates cannot contaminate accepted systems through shared
+parameter pullbacks. The nonlinear downstream-operation and joint
+higher-derivative limitations described above still apply.
+
+First derivatives recompute pair tiles, retaining bounded pair memory.
+Higher derivatives, including force-parameter derivatives and Hessians,
+may retain all tile graphs and require quadratic memory. Supply a neighbor
+list through ``model(structure, pairs=...)`` when coordination-number
+construction must also use sparse pair enumeration.
+
+CUDA products use fused tiles by default where supported. CPU execution,
+transform fallbacks and derivatives use eager tiles. The full matrix-free
+model does not support ``torch.compile``; internal fusion is independent
+of compiling the model. Setting ``fused=False`` disables internal fusion.
