@@ -168,14 +168,3 @@ Nested eager ``vmap`` and forward/reverse derivatives also support shared
 model parameters. Differentiating the complete model preserves the static
 ``matrix_free`` configuration and the coordination-number pytree. These
 checks use the existing ``tad-mctc`` Node implementation.
-
-Jacobi avoids data-dependent coarse setup under transforms, but is not the
-only source of transform overhead. Upstream batched Krylov and refinement
-loops can perform their full masked iteration budgets after convergence,
-including inactive exact fallbacks. In water-cluster measurements through
-999 atoms this preserved accuracy but made ``jacrev``, directional
-``jacfwd`` and ``vmap`` substantially slower than native backward. A single
-``torch.func.jvp`` retained early exit and was much closer to native runtime.
-The opt-in harness ``examples/validation/matrix_free_transforms.py`` and its
-accompanying report record timings, operator counts, memory, environments
-and convergence diagnostics. No iteration budget is relaxed for transforms.
