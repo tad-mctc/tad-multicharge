@@ -50,12 +50,14 @@ tensor([-0.8347, -0.8347,  0.2731,  0.2886,  0.2731,  0.2731,  0.2886,  0.2731])
 from __future__ import annotations
 
 import math
-from typing import Literal, overload
+from collections.abc import Callable
+from typing import Any, Literal, overload
 
 import torch
 from tad_mctc import storch
-from tad_mctc.autograd import is_functorch_tensor
+from tad_mctc.autograd import is_functorch_tensor, is_vmapped
 from tad_mctc.batch import real_atoms, real_pairs
+from tad_mctc.exceptions import ConvergenceError
 from tad_mctc.io.structure import Structure
 from tad_mctc.ncoord import cn_eeq
 from tad_mctc.ncoord.common import CNModel
@@ -200,6 +202,11 @@ class EEQModel(ChargeModel):
               factorization (default, recommended).
             - ``"linear"``: Solve the full bordered linear system directly.
               Less stable and slower for large systems.
+            - ``"cg"``: Dense Schur-complement method with the two SPD solves
+              done by Jacobi-preconditioned conjugate gradient, with implicit
+              derivatives (see :meth:`_solve_cg`). The Coulomb matrix still
+              needs quadratic memory; performance depends on conditioning,
+              system size and execution mode.
 
             Defaults to ``"schur"``.
 
@@ -219,6 +226,21 @@ class EEQModel(ChargeModel):
             than the model.
         ValueError
             ``solve_mode`` is unknown.
+        ConvergenceError
+            ``solve_mode="cg"`` did not converge, or the reconstructed
+            stationarity or charge residual is too large (outside of
+            ``vmap`` and ``torch.compile``, where the charges are NaN instead).
+
+        Notes
+        -----
+        The CG mode checks the final KKT stationarity and total charge as
+        well as the two auxiliary solves. Failure raises eagerly; under
+        ``vmap`` or ``torch.compile`` the affected systems return NaNs.
+        Higher derivatives are supported in eager mode. Compiled higher
+        derivatives are unsupported; compiled first-order ``jacrev`` needs
+        PyTorch 2.11 or newer. Under ``vmap`` and compilation, CG executes
+        its full upstream iteration budget (currently twice the atom count),
+        including iterations after individual systems have converged.
 
         Example
         -------
@@ -246,7 +268,7 @@ class EEQModel(ChargeModel):
         >>> print(total_charge.grad)
         tensor(1.2625)
         """
-        if solve_mode not in ("schur", "linear"):
+        if solve_mode not in ("schur", "linear", "cg"):
             raise ValueError(f"Unknown EEQ solve mode '{solve_mode}'!")
 
         self._check_structure(structure)
@@ -310,6 +332,11 @@ class EEQModel(ChargeModel):
 
         if solve_mode == "schur":
             return self._solve_schur(
+                cc, constraint, coulomb, total_charge, return_energy
+            )
+
+        if solve_mode == "cg":
+            return self._solve_cg(
                 cc, constraint, coulomb, total_charge, return_energy
             )
 
@@ -428,23 +455,289 @@ class EEQModel(ChargeModel):
         z = X[..., :, 0]  # A^{-1} b, (..., nat)
         y = X[..., :, 1]  # A^{-1} C, (..., nat)
 
-        # m = (C^T z - Q) / (C^T y) ; shape (..., 1)
-        num = (constraint * z).sum(dim=-1, keepdim=True) - total_charge
-        den = (constraint * y).sum(dim=-1, keepdim=True)
-        m = num / den
+        return _schur_charges(
+            z, y, cc, constraint, coulomb, total_charge, return_energy
+        )
 
-        # q = z - y * m (broadcast m over the `nat` dimension)
-        q = z - y * m  # (..., nat)
+    def _solve_cg(
+        self,
+        cc: Tensor,
+        constraint: Tensor,
+        coulomb: Tensor,
+        total_charge: Tensor,
+        return_energy: bool,
+    ) -> Tensor | tuple[Tensor, Tensor]:
+        """
+        Solve the EEQ linear system via the Schur-complement method, with
+        the two solves of the SPD Coulomb matrix done by Jacobi-preconditioned
+        conjugate gradient (see :meth:`_solve_schur`).
 
-        # Do not compute energy unless specifically requested
-        if return_energy is False:
-            return q
+        The derivatives of the charges are the implicit derivatives of the
+        linear system (:func:`tad_mctc.storch.linsolve.implicit_solve`), so
+        they are independent of the CG iterations. The matrix is still
+        built densely: one CG iteration costs :math:`O(N^2)`.
 
-        # E_scalar = 0.5 * x^T @ A @ x - b @ x^T
-        # E_vector =  x * (0.5 * A @ x - b)
-        e = q * (0.5 * torch.einsum("...ij,...j->...i", coulomb, q) - cc)
+        Parameters
+        ----------
+        cc : Tensor
+            Right-hand side vector.
+        constraint : Tensor
+            Constraint vector (ones for real atoms, zeros else).
+        coulomb : Tensor
+            Coulomb interaction matrix.
+        total_charge : Tensor
+            Total charge of the system, shape ``(..., 1)``.
+        return_energy : bool
+            Whether to return the electrostatic energy as well.
 
+        Returns
+        -------
+        Tensor | (Tensor, Tensor)
+            Partial charges or tuple of partial charges and energies.
+
+        Raises
+        ------
+        ConvergenceError
+            CG did not converge, e.g. because the Coulomb matrix is not
+            positive definite (not under ``vmap`` or ``torch.compile``,
+            where the charges of that system are NaN instead).
+        """
+        # Both right-hand sides as a batch dimension: (..., 2, nat)
+        B = torch.stack((cc, constraint), dim=-2)
+
+        result = storch.linsolve.implicit_solve(
+            _coulomb_matvec,
+            B,
+            coulomb,
+            method=_cg_finite_iterates,
+            symmetric=True,
+            preconditioner=_jacobi,
+            rtol=CG_RTOL,
+            atol=CG_ATOL,
+        )
+        # Preserve eager exceptions, but defer transformed failure masks
+        # until after the nonlinear reconstruction and energy evaluation.
+        if not is_vmapped(result.status):
+            storch.linsolve.require_convergence(result, name="EEQ CG solve")
+        aux_converged = (result.status == storch.linsolve.STATUS_CONVERGED).all(
+            dim=-1
+        )
+        X = result.solution
+        z = X[..., 0, :]  # A^{-1} b, (..., nat)
+        y = X[..., 1, :]  # A^{-1} C, (..., nat)
+
+        return _schur_charges(
+            z,
+            y,
+            cc,
+            constraint,
+            coulomb,
+            total_charge,
+            return_energy,
+            aux_converged=aux_converged,
+        )
+
+
+CG_RTOL = 1e-12
+"""Relative tolerance of the CG solves of ``solve_mode="cg"`` (raised by
+tad-mctc to 10 machine epsilons for single precision)."""
+
+CG_ATOL = 1e-14
+"""Absolute tolerance of the CG solves of ``solve_mode="cg"``."""
+
+
+def _coulomb_matvec(x: Tensor, coulomb: Tensor) -> Tensor:
+    """Coulomb matrix times the right-hand sides, ``(..., k, nat)``."""
+    return torch.einsum("...ij,...kj->...ki", coulomb, x)
+
+
+def _jacobi(r: Tensor, coulomb: Tensor) -> Tensor:
+    """Jacobi (diagonal) preconditioner of the Coulomb matrix."""
+    return r / coulomb.diagonal(dim1=-2, dim2=-1).unsqueeze(-2)
+
+
+def _cg_finite_iterates(
+    matvec: Callable[..., Tensor],
+    rhs: Tensor,
+    *params: Any,
+    **options: Any,
+) -> storch.linsolve.LinearSolveResult:
+    """Keep failed CG iterates finite without changing their diagnostics."""
+    result = storch.linsolve.cg(matvec, rhs, *params, **options)
+    converged = result.status == storch.linsolve.STATUS_CONVERGED
+    # implicit_solve runs this numerical method on detached inputs, then
+    # attaches its derivative rules. Replace failed iterates here so its
+    # saved primal values cannot introduce 0 * NaN in matrix pullbacks.
+    # Ones also give the Schur constraint solve a nonzero denominator.
+    # Original statuses still reject these placeholders at the outputs.
+    solution = torch.where(
+        converged.unsqueeze(-1), result.solution, torch.ones_like(rhs)
+    )
+    # Construct explicitly: older Dynamo versions cannot trace _replace.
+    return storch.linsolve.LinearSolveResult(
+        solution=solution,
+        residual=result.residual,
+        target=result.target,
+        iterations=result.iterations,
+        status=result.status,
+        refinement_status=result.refinement_status,
+        fallback_iterations=result.fallback_iterations,
+    )
+
+
+def _schur_charges(
+    z: Tensor,
+    y: Tensor,
+    cc: Tensor,
+    constraint: Tensor,
+    coulomb: Tensor,
+    total_charge: Tensor,
+    return_energy: bool,
+    *,
+    aux_converged: Tensor | None = None,
+) -> Tensor | tuple[Tensor, Tensor]:
+    """
+    Charges (and energies) from the solutions ``z = A^{-1} b`` and
+    ``y = A^{-1} C`` of the Schur-complement method.
+
+    Supplying auxiliary CG convergence also enables final KKT checks.
+    """
+    # m = (C^T z - Q) / (C^T y) ; shape (..., 1)
+    num = (constraint * z).sum(dim=-1, keepdim=True) - total_charge
+    den = (constraint * y).sum(dim=-1, keepdim=True)
+    m = num / den
+
+    # q = z - y * m (broadcast m over the `nat` dimension)
+    q = z - y * m  # (..., nat)
+
+    accepted = None
+    if aux_converged is not None:
+        accepted = _check_cg_residuals(
+            q, m, cc, constraint, coulomb, total_charge
+        )
+        accepted = accepted & aux_converged
+
+    # Do not compute energy unless specifically requested
+    if return_energy is False:
+        return (
+            q
+            if accepted is None
+            else storch.linsolve.mask_converged(q, accepted.unsqueeze(-1))
+        )
+
+    # E_scalar = 0.5 * x^T @ A @ x - b @ x^T
+    # E_vector =  x * (0.5 * A @ x - b)
+    # Use the reconstructed charges before the final acceptance mask.
+    # Squaring or multiplying masked NaNs can produce NaN cotangents for a
+    # selected valid system. Mask the energies only at the output boundary.
+    e = q * (0.5 * torch.einsum("...ij,...j->...i", coulomb, q) - cc)
+    if accepted is None:
         return q, e
+    mask = accepted.unsqueeze(-1)
+    return (
+        storch.linsolve.mask_converged(q, mask),
+        storch.linsolve.mask_converged(e, mask),
+    )
+
+
+def _check_cg_residuals(
+    charges: Tensor,
+    multiplier: Tensor,
+    cc: Tensor,
+    constraint: Tensor,
+    coulomb: Tensor,
+    total_charge: Tensor,
+) -> Tensor:
+    r"""
+    Return per-system acceptance of CG's reconstructed physical equations.
+
+    In the equations below, ``A`` is ``coulomb``, ``b`` is ``cc``, ``c`` is
+    ``constraint``, ``q`` is ``charges`` and ``mu`` is ``multiplier``.
+
+    Stationarity uses ``atol + rtol_eff * ||(b, Q)||_2`` plus a rounding
+    allowance ``10 eps * (|||A| |q|||_2 + ||c mu||_2)``, where
+    ``rtol_eff = max(CG_RTOL, 10 eps)``. The multiplier enters only the
+    rounding allowance; a large multiplier does not relax the solver
+    tolerance itself.
+
+    Charge conservation is checked independently against
+    ``atol + 10 eps * max(1, sum(|c q|) + |Q|)`` (charges in electrons).
+    This detects charge lost to cancellation in ``z - mu y``. Failed
+    checks raise eagerly. Under ``vmap`` and compilation the returned mask
+    lets the caller invalidate charges and energies after evaluating both.
+    """
+    # These quantities decide acceptance; derivatives still come from the
+    # implicit solve and Schur reconstruction, not from the diagnostics.
+    with torch.no_grad():
+        roundoff_factor = 10 * torch.finfo(charges.dtype).eps
+        effective_rtol = max(CG_RTOL, roundoff_factor)
+        requested_charge = total_charge.squeeze(-1)
+
+        # Stationarity: A q + c mu = b. Each residual/target below has one
+        # value per molecular system, with shape (...,).
+        coulomb_charges = torch.einsum("...ij,...j->...i", coulomb, charges)
+        constraint_multiplier = constraint * multiplier
+        stationarity_residual = torch.linalg.vector_norm(
+            coulomb_charges + constraint_multiplier - cc, dim=-1
+        )
+        rhs_norm = torch.sqrt(cc.square().sum(-1) + requested_charge.square())
+
+        # |A| |q| bounds the scale of the matrix-vector product before
+        # cancellation. Allow rounding at that scale when evaluating KKT.
+        absolute_coulomb_charges = torch.einsum(
+            "...ij,...j->...i", coulomb.abs(), charges.abs()
+        )
+        stationarity_rounding_scale = torch.linalg.vector_norm(
+            absolute_coulomb_charges, dim=-1
+        ) + torch.linalg.vector_norm(constraint_multiplier, dim=-1)
+        stationarity_target = (
+            CG_ATOL
+            + effective_rtol * rhs_norm
+            + roundoff_factor * stationarity_rounding_scale
+        )
+
+        # Charge conservation: c^T q = Q. Using the final charges in this
+        # scale detects cancellation between large auxiliary solutions.
+        constraint_charges = constraint * charges
+        charge_residual = (constraint_charges.sum(-1) - requested_charge).abs()
+        # The one-electron floor also allows roundoff in small, neutral
+        # systems, whose partial charges can otherwise give a tiny scale.
+        charge_rounding_scale = (
+            constraint_charges.abs().sum(-1) + requested_charge.abs()
+        ).clamp_min(1.0)
+        charge_target = CG_ATOL + roundoff_factor * charge_rounding_scale
+
+    accepted = torch.ones_like(charge_residual, dtype=torch.bool)
+    for residual, target, name in (
+        (stationarity_residual, stationarity_target, "stationarity"),
+        (charge_residual, charge_target, "total charge"),
+    ):
+        valid = (
+            torch.isfinite(residual)
+            & torch.isfinite(target)
+            & (residual <= target)
+        )
+        accepted = accepted & valid
+        # is_vmapped also returns True while compiling: neither transform
+        # permits inspecting tensor values in Python to raise an exception.
+        if is_vmapped(valid):
+            continue
+
+        if bool(valid.all()):
+            continue
+
+        # Compare each failing system with its own target, so the error
+        # reports the largest relative violation even in a mixed batch.
+        # A non-finite residual counts as the worst violation.
+        residual_ratio = (residual / target).nan_to_num(torch.inf)
+        worst_index = torch.where(valid, -torch.inf, residual_ratio).argmax()
+        worst_residual = residual.flatten()[worst_index].item()
+        worst_target = target.flatten()[worst_index].item()
+        raise ConvergenceError(
+            f"EEQ CG reconstruction violates KKT {name}: "
+            f"residual {worst_residual:.3e}, target {worst_target:.3e}."
+        )
+    return accepted
 
 
 def _coulomb_matrix_0d(
@@ -560,7 +853,12 @@ def get_eeq(
     return model(structure, return_energy=return_energy, solve_mode=solve_mode)
 
 
-def get_charges(structure: Structure, *, cn: CNModel = cn_eeq) -> Tensor:
+def get_charges(
+    structure: Structure,
+    *,
+    cn: CNModel = cn_eeq,
+    solve_mode: SolveMode = "schur",
+) -> Tensor:
     """
     Calculate atomic EEQ charges.
 
@@ -571,16 +869,23 @@ def get_charges(structure: Structure, *, cn: CNModel = cn_eeq) -> Tensor:
         charge; absent means neutral.
     cn : CNModel, optional
         Coordination number. Defaults to :data:`tad_mctc.ncoord.cn_eeq`.
+    solve_mode : SolveMode, optional
+        Solution method, see :meth:`EEQModel.solve`. Defaults to ``"schur"``.
 
     Returns
     -------
     Tensor
         Atomic charges, shape ``(..., nat)``.
     """
-    return get_eeq(structure, cn=cn, return_energy=False)
+    return get_eeq(structure, cn=cn, return_energy=False, solve_mode=solve_mode)
 
 
-def get_energy(structure: Structure, *, cn: CNModel = cn_eeq) -> Tensor:
+def get_energy(
+    structure: Structure,
+    *,
+    cn: CNModel = cn_eeq,
+    solve_mode: SolveMode = "schur",
+) -> Tensor:
     """
     Calculate atomic EEQ energies.
 
@@ -591,10 +896,14 @@ def get_energy(structure: Structure, *, cn: CNModel = cn_eeq) -> Tensor:
         charge; absent means neutral.
     cn : CNModel, optional
         Coordination number. Defaults to :data:`tad_mctc.ncoord.cn_eeq`.
+    solve_mode : SolveMode, optional
+        Solution method, see :meth:`EEQModel.solve`. Defaults to ``"schur"``.
 
     Returns
     -------
     Tensor
         Atom-resolved energies, shape ``(..., nat)``.
     """
-    return get_eeq(structure, cn=cn, return_energy=True)[1]
+    return get_eeq(structure, cn=cn, return_energy=True, solve_mode=solve_mode)[
+        1
+    ]

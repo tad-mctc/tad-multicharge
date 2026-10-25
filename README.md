@@ -325,6 +325,16 @@ print(grad.chi.shape)
 
 For a periodic structure under these transforms, the coordination number needs its periodic image shifts built ahead of time, which are passed to the model call: `model(structure, build_periodic_shifts(lattice, periodic, cn_eeq.cutoff))` (see `tad_mctc.neighbor.build_periodic_shifts`).
 
+### Choosing an EEQ solver
+
+Cholesky–Schur (`solve_mode="schur"`) remains the recommended default.
+The opt-in `solve_mode="cg"` uses Jacobi CG with implicit derivatives and still constructs the dense Coulomb matrix, requiring quadratic memory.
+Pass the keyword to the model, `solve`, `get_eeq`, `get_charges` or `get_energy`.
+CG checks the reconstructed KKT stationarity and total charge, in addition to both auxiliary solves; failed checks raise eagerly and produce NaNs for affected systems under `vmap` or compilation.
+
+Higher derivatives work in eager mode; compiled higher derivatives are unsupported, and compiled first-order `jacrev` requires PyTorch 2.11 or newer.
+Under `vmap` and compilation, CG runs the full upstream iteration budget (currently twice the atom count).
+
 ## Contributing
 
 This is a volunteer open source projects and contributions are always welcome.

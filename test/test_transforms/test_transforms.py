@@ -49,7 +49,7 @@ from ..utils import load_batch, load_structure
 
 DD_DOUBLE: DD = {"device": DEVICE, "dtype": torch.double}
 
-SOLVE_MODES = ["schur", "linear"]
+SOLVE_MODES = ["schur", "linear", "cg"]
 
 
 def _single() -> Structure:
@@ -94,12 +94,14 @@ def test_vmap_over_positions(load, solve_mode: SolveMode) -> None:  # type: igno
 
 
 @STRUCTURES
-def test_vmap_over_charge(load) -> None:  # type: ignore[no-untyped-def]
+@pytest.mark.parametrize("solve_mode", SOLVE_MODES)
+def test_vmap_over_charge(load, solve_mode: SolveMode) -> None:  # type: ignore[no-untyped-def]
+    """Batched total charges match independent solves for every backend."""
     structure, model = load(), _model()
     assert structure.charge is not None
 
     def f(charge: Tensor) -> Tensor:
-        return model(structure.replace(charge=charge))
+        return model(structure.replace(charge=charge), solve_mode=solve_mode)
 
     batch = torch.stack([structure.charge + d for d in (-1.0, 0.0, 1.0)])
     with no_vmap_fallback():
@@ -122,20 +124,29 @@ def test_vmap_over_structures(solve_mode: SolveMode) -> None:
     assert torch.allclose(e, eref, atol=1e-10)
 
 
-def test_vmap_over_models() -> None:
+@pytest.mark.parametrize("solve_mode", SOLVE_MODES)
+def test_vmap_over_models(solve_mode: SolveMode) -> None:
     """`vmap` over a stack of models (a `Node`) matches a loop."""
     structure, model = _single(), _model()
+    # Vary all four parameter families across the pytree batch: chi/kcn
+    # change the RHS, while eta/rad change the Coulomb operator itself.
     models = [
         model,
-        model.replace(chi=model.chi * 1.1),
+        model.replace(chi=model.chi * 1.1, kcn=model.kcn * 0.9),
         model.replace(eta=model.eta * 0.9, rad=model.rad * 1.05),
     ]
 
     with no_vmap_fallback():
-        batched = vmap(lambda m: m(structure))(stack(models))
+        batched = vmap(lambda m: m(structure, solve_mode=solve_mode))(
+            stack(models)
+        )
 
-    looped = torch.stack([m(structure) for m in models])
+    looped = torch.stack([m(structure, solve_mode=solve_mode) for m in models])
     assert torch.allclose(batched, looped, atol=1e-10)
+    # The full bordered solve supplies an independent reference in addition
+    # to the vmap-versus-loop comparison using the selected backend.
+    reference = torch.stack([m(structure, solve_mode="linear") for m in models])
+    assert torch.allclose(batched, reference, atol=1e-10, rtol=0)
 
 
 ########################################################################

@@ -30,7 +30,7 @@ from tad_mctc.io.structure import Structure
 from tad_mctc.ncoord import cn_eeq
 from tad_mctc.typing import DD
 
-from tad_multicharge.model import ChargeModel, eeq
+from tad_multicharge.model import ChargeModel, SolveMode, eeq
 
 from ..conftest import DEVICE
 from ..utils import load_structure
@@ -188,3 +188,25 @@ def test_absent_charge_is_neutral() -> None:
     q = model(structure)
     q0 = model(structure.replace(charge=torch.tensor(0.0, **dd)))
     assert torch.allclose(q, q0, atol=1e-12)
+
+
+@pytest.mark.parametrize("solve_mode", ["schur", "linear", "cg"])
+def test_convenience_solve_mode(solve_mode: SolveMode) -> None:
+    """Charge and energy helpers forward the solver and CN choices."""
+    structure = _structure()
+    # A nondefault CN checks that adding the solver keyword preserves the
+    # helpers' existing coordination-number customization as well.
+    cn = cn_eeq.replace(cutoff=10.0)
+    q, e = eeq.get_eeq(
+        structure, cn=cn, return_energy=True, solve_mode=solve_mode
+    )
+    assert torch.equal(
+        eeq.get_charges(structure, cn=cn, solve_mode=solve_mode), q
+    )
+    assert torch.equal(
+        eeq.get_energy(structure, cn=cn, solve_mode=solve_mode), e
+    )
+    # An invalid mode must reach validation, not silently use the default.
+    for helper in (eeq.get_charges, eeq.get_energy):
+        with pytest.raises(ValueError, match="Unknown EEQ solve mode"):
+            helper(structure, solve_mode="invalid")  # type: ignore[arg-type]

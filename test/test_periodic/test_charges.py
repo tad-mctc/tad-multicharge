@@ -35,12 +35,17 @@ from .samples import SOLVE_MODES, load, samples
 SAMPLES = list(samples)
 
 
+def _tol(solve_mode: SolveMode) -> float:
+    """Double precision tolerance; CG is converged to ``CG_RTOL`` only."""
+    return 1e-10 if solve_mode == "cg" else 1e-12
+
+
 @pytest.mark.parametrize("dtype", [torch.float, torch.double])
 @pytest.mark.parametrize("solve_mode", SOLVE_MODES)
 @pytest.mark.parametrize("name", SAMPLES)
 def test_single(dtype: torch.dtype, solve_mode: SolveMode, name: str) -> None:
     dd: DD = {"device": DEVICE, "dtype": dtype}
-    tol = 1e-4 if dtype == torch.float else 1e-12
+    tol = 1e-4 if dtype == torch.float else _tol(solve_mode)
 
     structure = load(name, dd)
     ref = samples[name]
@@ -66,14 +71,13 @@ def test_batch(solve_mode: SolveMode) -> None:
     model = eeq.EEQModel.param2019(**dd)
     q, e = model(structure, return_energy=True, solve_mode=solve_mode)
 
+    tol = _tol(solve_mode)
     for i, name in enumerate(names):
         ref = samples[name]
         nat = ref["q"].shape[-1]
-        assert pytest.approx(ref["q"].cpu(), abs=1e-12) == q[i, :nat].cpu()
+        assert pytest.approx(ref["q"].cpu(), abs=tol) == q[i, :nat].cpu()
         assert (q[i, nat:] == 0).all()
-        assert (
-            pytest.approx(ref["energy"].item(), abs=1e-12) == e[i].sum().item()
-        )
+        assert pytest.approx(ref["energy"].item(), abs=tol) == e[i].sum().item()
 
 
 def test_multicharge_unit_tests() -> None:
