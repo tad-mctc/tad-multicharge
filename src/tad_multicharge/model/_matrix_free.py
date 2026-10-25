@@ -52,7 +52,8 @@ class MatrixFreeOptions:
         inputs use their own precision. Defaults to ``True``.
     fused : bool, optional
         Fuse CUDA pair products when supported. Defaults to ``True``;
-        transforms and CPU execution use eager tiles.
+        CPU products and transformed derivative products use eager tiles.
+        Unwrapped CUDA primal products may still fuse under transforms.
     maxiter : int | None, optional
         Iteration limit per projected solve. ``None`` uses tad-mctc's limit.
     fallback : bool, optional
@@ -163,6 +164,13 @@ def _preconditioner(
 
     natoms = positions.shape[-2]
     batch_size = math.prod(positions.shape[:-2])
+
+    # Structure and the dense solvers accept an empty leading batch. Keep
+    # the ordinary differentiable solve, but skip data-dependent coarse
+    # setup and the memory-bound division when there are no systems.
+    if batch_size == 0:
+        return _jacobi
+
     product_dtype = (
         torch.float32 if options.mixed_precision else positions.dtype
     )

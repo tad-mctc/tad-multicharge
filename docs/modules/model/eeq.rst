@@ -110,7 +110,11 @@ radii and hardnesses are explicit differentiable operator arguments.
 ``MatrixFreeOptions`` is immutable model context, so the physical parameter
 tree retains its usual ``vmap``, ``jacrev`` and ``jacfwd`` behavior. Solver
 choice also works through the convenience functions. Molecular and padded
-batches are supported. Periodic inputs are rejected explicitly: their
+batches are supported, including empty leading batch dimensions. Empty
+batches return empty charges and atomic energies with the usual shapes
+and zero derivatives for shared parameters; they skip coarse-cell setup.
+A nonempty all-padding system remains distinct and must satisfy the total
+charge constraint. Periodic inputs are rejected explicitly: their
 Ewald operator needs a separate matrix-free implementation. The dense
 periodic modes and the default ``"schur"`` are unchanged.
 
@@ -153,7 +157,25 @@ may retain all tile graphs and require quadratic memory. Supply a neighbor
 list through ``model(structure, pairs=...)`` when coordination-number
 construction must also use sparse pair enumeration.
 
-CUDA products use fused tiles by default where supported. CPU execution,
-transform fallbacks and derivatives use eager tiles. The full matrix-free
+CUDA products use fused tiles by default where supported. CPU execution
+and transformed derivative products use eager tiles. A custom autograd
+Function can unwrap transformed inputs and still fuse its CUDA primal;
+``fused=True`` does not require every product to compile. The full matrix-free
 model does not support ``torch.compile``; internal fusion is independent
 of compiling the model. Setting ``fused=False`` disables internal fusion.
+
+Nested eager ``vmap`` and forward/reverse derivatives also support shared
+model parameters. Differentiating the complete model preserves the static
+``matrix_free`` configuration and the coordination-number pytree. These
+checks use the existing ``tad-mctc`` Node implementation.
+
+Jacobi avoids data-dependent coarse setup under transforms, but is not the
+only source of transform overhead. Upstream batched Krylov and refinement
+loops can perform their full masked iteration budgets after convergence,
+including inactive exact fallbacks. In water-cluster measurements through
+999 atoms this preserved accuracy but made ``jacrev``, directional
+``jacfwd`` and ``vmap`` substantially slower than native backward. A single
+``torch.func.jvp`` retained early exit and was much closer to native runtime.
+The opt-in harness ``examples/validation/matrix_free_transforms.py`` and its
+accompanying report record timings, operator counts, memory, environments
+and convergence diagnostics. No iteration budget is relaxed for transforms.

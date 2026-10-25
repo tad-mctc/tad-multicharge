@@ -95,10 +95,23 @@ def test_construction_inside_compile(
         ),
     ],
 )
-def test_compile_jacrev(solve_mode: SolveMode) -> None:
+@pytest.mark.parametrize(
+    "configured", [False, True], ids=["default", "options"]
+)
+def test_compile_jacrev(solve_mode: SolveMode, configured: bool) -> None:
     """``torch.compile(jacrev(f))``: compiled forces equal eager ones."""
     structure = load_structure("SiH4", DD_DOUBLE, 0.0)
     model = eeq.EEQModel.param2019(**DD_DOUBLE)
+
+    if configured:
+        model = model.replace(
+            matrix_free=eeq.MatrixFreeOptions(
+                tile=3,
+                coarse_memory=4096,
+                mixed_precision=False,
+                fused=False,
+            )
+        )
 
     def energy(positions: Tensor) -> Tensor:
         s = structure.replace(positions=positions)
@@ -110,7 +123,13 @@ def test_compile_jacrev(solve_mode: SolveMode) -> None:
     assert torch.allclose(forces, ref, atol=1e-10, rtol=0)
 
 
-def test_nodes_as_arguments_no_recompile() -> None:
+@pytest.mark.parametrize("solve_mode", ["schur", "cg"])
+@pytest.mark.parametrize(
+    "configured", [False, True], ids=["default", "options"]
+)
+def test_nodes_as_arguments_no_recompile(
+    solve_mode: SolveMode, configured: bool
+) -> None:
     """
     The model and the structure are pytrees: other values of the same
     shapes reuse the compiled graph.
@@ -124,12 +143,24 @@ def test_nodes_as_arguments_no_recompile() -> None:
     from torch._dynamo.testing import CompileCounter
 
     def f(model: eeq.EEQModel, structure: Structure) -> Tensor:
-        return model.solve(structure, model.cn(structure))
+        return model.solve(
+            structure, model.cn(structure), solve_mode=solve_mode
+        )
 
     def g(model: eeq.EEQModel, structure: Structure) -> Tensor:
-        return model(structure)
+        return model(structure, solve_mode=solve_mode)
 
     model = eeq.EEQModel.param2019(**DD_DOUBLE)
+    if configured:
+        model = model.replace(
+            matrix_free=eeq.MatrixFreeOptions(
+                tile=3,
+                coarse_memory=4096,
+                mixed_precision=False,
+                fused=False,
+            )
+        )
+
     s1 = load_structure("SiH4", DD_DOUBLE, 0.0)
     assert s1.charge is not None
     s2 = s1.replace(positions=s1.positions * 1.01, charge=s1.charge + 1.0)
@@ -142,12 +173,13 @@ def test_nodes_as_arguments_no_recompile() -> None:
         assert torch.allclose(compiled(m, s), g(m, s), atol=1e-10, rtol=0)
     assert counter.frame_count == 1
 
-    # clear the cache so `g` compiles fresh and is counted on its own
+    # Clear the cache so `g` compiles fresh and is counted on its own.
     torch._dynamo.reset()  # pylint: disable=protected-access
     counter = CompileCounter()
     compiled = torch.compile(g, backend=counter, fullgraph=True)
     for m, s in cases:
         assert torch.allclose(compiled(m, s), g(m, s), atol=1e-10, rtol=0)
-    # unlike `__tversion__`, this orders 2.8.0 pre-releases before 2.8.0
+
+    # Unlike `__tversion__`, this orders 2.8.0 pre-releases before 2.8.0.
     if torch.torch_version.TorchVersion(torch.__version__) >= "2.8.0":
         assert counter.frame_count == 1
