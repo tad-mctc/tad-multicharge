@@ -43,9 +43,10 @@ auxiliary solve can consequently still be rejected. Residual checks are
 diagnostics and do not add derivatives to the implicit solve.
 
 The public ``tad_mctc.storch.linsolve.mask_converged`` utility also invalidates
-failed-system derivatives. This requires ``tad-mctc>=0.11.2``. Accepted systems
-retain their usual charge derivatives under per-system ``vmap``/``jacrev``
-and eager forward/reverse compositions.
+failed-system derivatives. The required ``tad-mctc>=0.11.3`` also includes
+shared Krylov optimizations for eager ``torch.func`` transforms. Accepted
+systems retain their usual charge derivatives under per-system
+``vmap``/``jacrev`` and eager forward/reverse compositions.
 
 Select accepted systems before nonlinear downstream operations on masked
 charges: even first derivatives can be contaminated by ``0 * NaN`` if
