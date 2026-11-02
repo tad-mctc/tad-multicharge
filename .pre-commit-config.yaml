@@ -47,7 +47,7 @@ repos:
         args: [--py310-plus, --keep-runtime-typing]
 
   - repo: https://github.com/pycqa/isort
-    rev: 10.0.0b1
+    rev: 10.0.0b2
     hooks:
       - id: isort
         name: isort (python)
@@ -65,7 +65,7 @@ repos:
       - id: zizmor
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.4.0
+    rev: v2.4.1
     hooks:
       - id: mypy
         pass_filenames: false
